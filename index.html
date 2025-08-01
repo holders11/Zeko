@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>فحص المحافظ - إغلاق حسابات التوكن</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: sans-serif; 
+      direction: rtl; 
+      padding: 15px; 
+      margin: 0;
+      background: #f5f5f5;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    h2 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 30px;
+    }
+    
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    
+    input {
+      flex: 1;
+      min-width: 250px;
+      padding: 12px;
+      font-size: 16px;
+      border: 2px solid #ddd;
+      border-radius: 5px;
+      outline: none;
+    }
+    
+    input:focus {
+      border-color: #4CAF50;
+    }
+    
+    button {
+      padding: 12px 25px;
+      font-size: 16px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    
+    button:hover {
+      background: #45a049;
+    }
+    
+    #progressBar {
+      width: 100%;
+      background: #eee;
+      height: 25px;
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 20px 0;
+    }
+    
+    #progressBar > div {
+      height: 100%;
+      background: linear-gradient(45deg, #4CAF50, #66BB6A);
+      width: 0%;
+      color: white;
+      text-align: center;
+      line-height: 25px;
+      transition: width 0.3s;
+      font-weight: bold;
+    }
+    
+    table {
+      border-collapse: collapse;
+      margin-top: 20px;
+      width: 100%;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    th {
+      background: #4CAF50;
+      color: white;
+      padding: 15px 8px;
+      text-align: center;
+      font-weight: bold;
+    }
+    
+    td {
+      border-bottom: 1px solid #eee;
+      padding: 12px 8px;
+      text-align: center;
+    }
+    
+    tr:hover {
+      background: #f9f9f9;
+    }
+    
+    .copy-btn {
+      cursor: pointer;
+      color: #4CAF50;
+      font-size: 18px;
+      transition: transform 0.2s;
+    }
+    
+    .copy-btn:hover {
+      transform: scale(1.2);
+    }
+    
+    .sort-arrow {
+      font-size: 12px;
+      margin-left: 5px;
+    }
+    
+    th[onclick]:hover {
+      background: #45a049;
+    }
+    
+    /* تصميم متجاوب للهاتف المحمول */
+    @media (max-width: 768px) {
+      body {
+        padding: 10px;
+      }
+      
+      .container {
+        padding: 15px;
+      }
+      
+      h2 {
+        font-size: 1.5em;
+        margin-bottom: 20px;
+      }
+      
+      .input-group {
+        flex-direction: column;
+      }
+      
+      input {
+        min-width: 100%;
+        font-size: 16px; /* منع التكبير في iOS */
+      }
+      
+      button {
+        width: 100%;
+        padding: 15px;
+        font-size: 18px;
+      }
+      
+      table {
+        font-size: 14px;
+      }
+      
+      th, td {
+        padding: 8px 4px;
+      }
+      
+      /* جعل الجدول قابل للتمرير أفقياً */
+      .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      
+      /* تقليل حجم العناوين في الجدول */
+      th:first-child { min-width: 80px; max-width: 80px; }
+      th:nth-child(2), th:nth-child(3) { min-width: 70px; }
+      th:last-child { min-width: 40px; }
+      
+      /* تحسين خانة العنوان */
+      td:first-child { 
+        font-family: monospace; 
+        font-size: 12px;
+        max-width: 80px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .container {
+        padding: 10px;
+      }
+      
+      h2 {
+        font-size: 1.3em;
+      }
+      
+      table {
+        font-size: 12px;
+      }
+      
+      th, td {
+        padding: 6px 2px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>فحص المحافظ - البحث عن محافظ تحتوي على حسابات توكن قابلة للإغلاق</h2>
+    
+    <div class="input-group">
+      <input type="text" id="mint" placeholder="أدخل عنوان التوكن" />
+      <button onclick="startScan()">فحص</button>
+    </div>
+
+    <div id="progressBar"><div>0%</div></div>
+    
+    <div id="holdersInfo" style="text-align: center; margin: 20px 0; font-size: 18px; color: #333; display: none;">
+      <strong>إجمالي عدد الحاملين (10$+): <span id="totalHolders">0</span></strong><br>
+      <strong>سعر التوكن: $<span id="tokenPrice">0</span></strong>
+    </div>
+    
+    <div class="table-container">
+      <table id="results" style="display:none">
+        <thead>
+          <tr>
+            <th onclick="sortTable(0)" style="cursor: pointer;">العنوان <span class="sort-arrow">⇅</span></th>
+            <th onclick="sortTable(1)" style="cursor: pointer;">الرصيد <span class="sort-arrow">⇅</span></th>
+            <th onclick="sortTable(2)" style="cursor: pointer;">قيمة التوكن <span class="sort-arrow">⇅</span></th>
+            <th onclick="sortTable(3)" style="cursor: pointer;">إجمالي الـ Rent <span class="sort-arrow">⇅</span></th>
+            <th onclick="sortTable(4)" style="cursor: pointer;">الحسابات <span class="sort-arrow">⇅</span></th>
+            <th>نسخ</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    
+    <div id="totalSummary" style="display: none; text-align: center; margin: 20px 0; padding: 15px; background: #e8f5e8; border-radius: 8px; border: 2px solid #4CAF50;">
+      <h3 style="margin: 0; color: #2e7d32;">📊 ملخص إجمالي</h3>
+      <p style="font-size: 18px; margin: 10px 0;">
+        <strong>إجمالي SOL القابل للاسترداد: <span id="totalReclaimable" style="color: #1b5e20; font-size: 20px;">0</span> SOL</strong>
+      </p>
+      <p style="font-size: 16px; margin: 5px 0; color: #388e3c;">
+        من <span id="totalWallets">0</span> محفظة مؤهلة | إجمالي <span id="totalAccounts">0</span> حساب توكن
+      </p>
+    </div>
+  </div></body>
+
+  <script>
+    let totalReclaimableSOL = 0;
+    let totalProcessedWallets = 0;
+    let totalTokenAccounts = 0;
+    let sortDirection = {};
+    let allWalletData = [];
+    
+    function startScan() {
+      const mint = document.getElementById("mint").value.trim();
+      if (!mint) return alert("يرجى إدخال عنوان توكن");
+      
+      // إعادة تعيين القيم
+      totalReclaimableSOL = 0;
+      totalProcessedWallets = 0;
+      totalTokenAccounts = 0;
+      allWalletData = [];
+      sortDirection = {};
+      
+      document.querySelector("#results").style.display = "none";
+      document.querySelector("#results tbody").innerHTML = "";
+      document.getElementById("holdersInfo").style.display = "none";
+      document.getElementById("totalSummary").style.display = "none";
+      updateProgress(0, 1);
+
+      const evtSource = new EventSourcePolyfill("/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mint }),
+      });
+
+      evtSource.onmessage = function (e) {
+        try {
+          // التحقق من وجود البيانات وأنها ليست فارغة
+          if (!e.data || e.data.trim() === '' || e.data === '{}' || e.data === 'null') {
+            return;
+          }
+
+          const data = JSON.parse(e.data);
+
+          if (data.error) {
+            alert("خطأ: " + data.error);
+            evtSource.close();
+            return;
+          }
+
+          if (data.tokenPrice !== undefined) {
+            document.getElementById("tokenPrice").textContent = data.tokenPrice.toFixed(4);
+          }
+
+          if (data.totalHolders) {
+            document.getElementById("totalHolders").textContent = data.totalHolders;
+            document.getElementById("holdersInfo").style.display = "block";
+          }
+
+          if (data.progress) {
+            updateProgress(data.progress, data.total);
+          }
+
+          if (data.batch) {
+            // معالجة البيانات المجمعة
+            data.results.forEach((wallet) => {
+              // حفظ البيانات للترتيب
+              allWalletData.push(wallet);
+              
+              // تحديث الإجماليات
+              totalReclaimableSOL += parseFloat(wallet.reclaimable);
+              totalProcessedWallets++;
+              totalTokenAccounts += wallet.accountsCount;
+              
+              // تحديث الملخص
+              updateSummary();
+            });
+            
+            // رسم الجدول
+            renderTable();
+            
+            if (!document.querySelector("#results").style.display || document.querySelector("#results").style.display === "none") {
+              document.querySelector("#results").style.display = "table";
+              document.getElementById("totalSummary").style.display = "block";
+            }
+          }
+
+          if (data.done) {
+            if (data.totalResults === 0) {
+              alert("لم يتم العثور على محافظ مؤهلة للحرق/الإغلاق");
+            }
+            evtSource.close();
+          }
+        } catch (error) {
+          console.error("خطأ في معالجة الرسالة:", error, "البيانات المستلمة:", e.data);
+        }
+      };
+    }
+
+    function updateProgress(done, total) {
+      const percent = Math.floor((done / total) * 100);
+      const bar = document.querySelector("#progressBar > div");
+      bar.style.width = percent + "%";
+      bar.textContent = percent + "%";
+    }
+
+    function updateSummary() {
+      document.getElementById("totalReclaimable").textContent = totalReclaimableSOL.toFixed(6);
+      document.getElementById("totalWallets").textContent = totalProcessedWallets;
+      document.getElementById("totalAccounts").textContent = totalTokenAccounts;
+    }
+
+    function copy(text) {
+      navigator.clipboard.writeText(text).then(() => alert("تم النسخ"));
+    }
+
+    // دعم POST مع EventSource
+    function EventSourcePolyfill(url, options) {
+      const evt = {};
+      const xhr = new XMLHttpRequest();
+      let isClosed = false;
+      
+      xhr.open(options.method || "POST", url);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(options.body);
+
+      let lastIndex = 0;
+
+      xhr.onreadystatechange = () => {
+        if (isClosed) return;
+        
+        if (xhr.readyState === 3 || xhr.readyState === 4) {
+          const responseText = xhr.responseText.substring(lastIndex);
+          lastIndex = xhr.responseText.length;
+          
+          const lines = responseText.split("\n");
+          lines.forEach((line) => {
+            if (line.startsWith("data:")) {
+              const data = line.slice(5).trim();
+              if (data && data !== '{}' && data !== 'null') {
+                try {
+                  // التحقق من صحة JSON قبل الإرسال
+                  JSON.parse(data);
+                  evt.onmessage && evt.onmessage({ data });
+                } catch (error) {
+                  console.error("خطأ في تحليل JSON:", data, error);
+                }
+              }
+            }
+          });
+          
+          // إغلاق الاتصال عند انتهاء الاستجابة
+          if (xhr.readyState === 4) {
+            isClosed = true;
+          }
+        }
+      };
+
+      // إضافة دالة close محسنة
+      evt.close = function() {
+        console.log("🔒 محاولة إغلاق الاتصال...");
+        if (!isClosed) {
+          isClosed = true;
+          try {
+            if (xhr && xhr.readyState !== 4) {
+              xhr.abort();
+            }
+            console.log("✅ تم إغلاق الاتصال بنجاح");
+          } catch (error) {
+            console.error("❌ خطأ في إغلاق الاتصال:", error);
+          }
+        } else {
+          console.log("ℹ️ الاتصال مغلق بالفعل");
+        }
+      };
+
+      return evt;
+    }
+
+    // دالة رسم الجدول
+    function renderTable() {
+      const tbody = document.querySelector("#results tbody");
+      tbody.innerHTML = "";
+      
+      allWalletData.forEach((wallet) => {
+        const row = document.createElement("tr");
+        const accountsInfo = `${wallet.accountsCount} (T:${wallet.tokenAccounts || 0}, N:${wallet.nftAccounts || 0}, C:${wallet.cleanupAccounts || 0})`;
+        // اختصار العنوان للهاتف المحمول
+        const shortAddress = `${wallet.address.substring(0, 4)}..${wallet.address.substring(wallet.address.length - 3)}`;
+        row.innerHTML = `
+          <td title="${wallet.address}">${shortAddress}</td>
+          <td>${wallet.solBalance} SOL</td>
+          <td>$${wallet.tokenValue}</td>
+          <td>${wallet.reclaimable} SOL</td>
+          <td>${accountsInfo}</td>
+          <td><span class="copy-btn" onclick="copy('${wallet.address}')">📋</span></td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    // دالة الترتيب
+    function sortTable(columnIndex) {
+      // تحديد اتجاه الترتيب (تصاعدي، تنازلي، عادي)
+      if (!sortDirection[columnIndex]) {
+        sortDirection[columnIndex] = 'asc';
+      } else if (sortDirection[columnIndex] === 'asc') {
+        sortDirection[columnIndex] = 'desc';
+      } else if (sortDirection[columnIndex] === 'desc') {
+        sortDirection[columnIndex] = 'normal';
+      } else {
+        sortDirection[columnIndex] = 'asc';
+      }
+      
+      // إعادة تعيين أسهم الترتيب
+      document.querySelectorAll('.sort-arrow').forEach(arrow => {
+        arrow.textContent = '⇅';
+      });
+      
+      // تحديث السهم للعمود المحدد
+      const currentArrow = document.querySelectorAll('.sort-arrow')[columnIndex];
+      if (sortDirection[columnIndex] === 'asc') {
+        currentArrow.textContent = '↑';
+      } else if (sortDirection[columnIndex] === 'desc') {
+        currentArrow.textContent = '↓';
+      } else {
+        currentArrow.textContent = '⇅';
+      }
+      
+      // ترتيب البيانات أو إعادتها للوضع العادي
+      if (sortDirection[columnIndex] === 'normal') {
+        // إعادة الترتيب للوضع الأصلي (حسب الـ reclaimable بشكل تنازلي)
+        allWalletData.sort((a, b) => {
+          return parseFloat(b.reclaimable) - parseFloat(a.reclaimable);
+        });
+      } else {
+        allWalletData.sort((a, b) => {
+          let valueA, valueB;
+          
+          switch(columnIndex) {
+            case 0: // العنوان
+              valueA = a.address.toLowerCase();
+              valueB = b.address.toLowerCase();
+              break;
+            case 1: // الرصيد
+              valueA = parseFloat(a.solBalance);
+              valueB = parseFloat(b.solBalance);
+              break;
+            case 2: // قيمة التوكن
+              valueA = parseFloat(a.tokenValue);
+              valueB = parseFloat(b.tokenValue);
+              break;
+            case 3: // إجمالي الـ Rent
+              valueA = parseFloat(a.reclaimable);
+              valueB = parseFloat(b.reclaimable);
+              break;
+            case 4: // الحسابات
+              valueA = a.accountsCount;
+              valueB = b.accountsCount;
+              break;
+            default:
+              return 0;
+          }
+          
+          if (sortDirection[columnIndex] === 'asc') {
+            return valueA > valueB ? 1 : valueA < valueB ? -1 : 0;
+          } else {
+            return valueA < valueB ? 1 : valueA > valueB ? -1 : 0;
+          }
+        });
+      }
+      
+      // إعادة رسم الجدول
+      renderTable();
+    }
+  </script>
+
+</body>
+</html>
