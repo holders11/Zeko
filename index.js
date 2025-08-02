@@ -313,6 +313,12 @@ app.post("/analyze", async (req, res) => {
     console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة...`);
 
     for (let owner of walletOwners) {
+      // التحقق من حالة الاتصال قبل معالجة كل محفظة
+      if (res.destroyed || res.writableEnded) {
+        console.log("🛑 تم قطع الاتصال - توقيف المعالجة");
+        return;
+      }
+      
       try {
         console.log(`📝 معالجة المحفظة ${processed + 1}/${walletOwners.length}: ${owner}`);
         const data = await analyzeWallet(owner, mint, tokenPrice);

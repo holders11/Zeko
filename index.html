@@ -65,6 +65,14 @@
       background: #45a049;
     }
     
+    button.stop-button {
+      background: #f44336;
+    }
+    
+    button.stop-button:hover {
+      background: #da190b;
+    }
+    
     #progressBar {
       width: 100%;
       background: #eee;
@@ -218,7 +226,7 @@
     
     <div class="input-group">
       <input type="text" id="mint" placeholder="أدخل عنوان التوكن" />
-      <button onclick="startScan()">فحص</button>
+      <button id="scanButton" onclick="toggleScan()">فحص</button>
     </div>
 
     <div id="progressBar"><div>0%</div></div>
@@ -261,10 +269,26 @@
     let totalTokenAccounts = 0;
     let sortDirection = {};
     let allWalletData = [];
+    let isScanning = false;
+    let currentEventSource = null;
+    
+    function toggleScan() {
+      if (isScanning) {
+        stopScan();
+      } else {
+        startScan();
+      }
+    }
     
     function startScan() {
       const mint = document.getElementById("mint").value.trim();
       if (!mint) return alert("يرجى إدخال عنوان توكن");
+      
+      // تغيير حالة الزر
+      isScanning = true;
+      const scanButton = document.getElementById("scanButton");
+      scanButton.textContent = "إيقاف";
+      scanButton.className = "stop-button";
       
       // إعادة تعيين القيم
       totalReclaimableSOL = 0;
@@ -279,13 +303,13 @@
       document.getElementById("totalSummary").style.display = "none";
       updateProgress(0, 1);
 
-      const evtSource = new EventSourcePolyfill("/analyze", {
+      currentEventSource = new EventSourcePolyfill("/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mint }),
       });
 
-      evtSource.onmessage = function (e) {
+      currentEventSource.onmessage = function (e) {
         try {
           // التحقق من وجود البيانات وأنها ليست فارغة
           if (!e.data || e.data.trim() === '' || e.data === '{}' || e.data === 'null') {
@@ -296,8 +320,23 @@
 
           if (data.error) {
             alert("خطأ: " + data.error);
-            evtSource.close();
+            resetScanButton();
+            currentEventSource.close();
             return;
+          }
+
+          // معالجة التحذيرات والرسائل
+          if (data.warning && data.waitingForConfirmation) {
+            const shouldContinue = confirm(data.message);
+            if (!shouldContinue) {
+              stopScan();
+              return;
+            }
+          }
+          
+          // معالجة البيانات الجاهزة للمتابعة
+          if (data.readyToContinue) {
+            console.log("📦 تم استلام قائمة المحافظ:", data.walletOwners?.length || 0);
           }
 
           if (data.tokenPrice !== undefined) {
@@ -341,12 +380,29 @@
             if (data.totalResults === 0) {
               alert("لم يتم العثور على محافظ مؤهلة للحرق/الإغلاق");
             }
-            evtSource.close();
+            resetScanButton();
+            currentEventSource.close();
           }
         } catch (error) {
           console.error("خطأ في معالجة الرسالة:", error, "البيانات المستلمة:", e.data);
         }
       };
+    }
+    
+    function stopScan() {
+      if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+      }
+      resetScanButton();
+      alert("تم إيقاف عملية الفحص");
+    }
+    
+    function resetScanButton() {
+      isScanning = false;
+      const scanButton = document.getElementById("scanButton");
+      scanButton.textContent = "فحص";
+      scanButton.className = "";
     }
 
     function updateProgress(done, total) {
@@ -418,6 +474,7 @@
               xhr.abort();
             }
             console.log("✅ تم إغلاق الاتصال بنجاح");
+            resetScanButton();
           } catch (error) {
             console.error("❌ خطأ في إغلاق الاتصال:", error);
           }
