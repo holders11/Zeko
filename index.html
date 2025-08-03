@@ -218,6 +218,74 @@
         padding: 6px 2px;
       }
     }
+
+    /* تصميم أزرار الإعدادات الصغيرة */
+    .preset-btn-small {
+      background: #ffffff;
+      border: 1px solid #ced4da;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 13px;
+      font-weight: 500;
+      min-width: 45px;
+    }
+
+    .preset-btn-small:hover {
+      background: #e9ecef;
+      border-color: #007bff;
+      transform: translateY(-1px);
+    }
+
+    .preset-btn-small.active {
+      background: #007bff;
+      color: white;
+      border-color: #007bff;
+    }
+
+    /* تصميم أيقونة الإعدادات الحديثة */
+    #settingsButton {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    #settingsButton:before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+      transition: left 0.5s;
+    }
+
+    #settingsButton:hover {
+      background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%) !important;
+      transform: translateY(-3px) scale(1.05);
+      box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+    }
+
+    #settingsButton:hover:before {
+      left: 100%;
+    }
+
+    #settingsButton:hover .settings-icon {
+      transform: rotate(180deg);
+    }
+
+    .settings-icon {
+      transition: transform 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      display: inline-block;
+      font-size: 18px;
+    }
   </style>
 </head>
 <body>
@@ -227,6 +295,38 @@
     <div class="input-group">
       <input type="text" id="mint" placeholder="أدخل عنوان التوكن" />
       <button id="scanButton" onclick="toggleScan()">فحص</button>
+      <button id="settingsButton" onclick="toggleSettings()">
+        <span class="settings-icon">⚙️</span>
+      </button>
+    </div>
+
+    <!-- نافذة الإعدادات -->
+    <div id="settingsPanel" style="display: none; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+      <h4 style="margin: 0 0 12px 0; color: #495057; text-align: center; font-size: 16px; font-weight: 600;">
+        ⚙️ إعدادات الفحص
+      </h4>
+      
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #6c757d; font-size: 14px;">
+          الحد الأدنى للحسابات:
+        </label>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 10px;">
+          <button onclick="setMinAccounts(25)" class="preset-btn-small" data-value="25">25</button>
+          <button onclick="setMinAccounts(50)" class="preset-btn-small" data-value="50">50</button>
+          <button onclick="setMinAccounts(100)" class="preset-btn-small" data-value="100">100</button>
+        </div>
+        <div style="display: flex; gap: 8px; justify-content: center; align-items: center;">
+          <input type="number" id="customMinAccounts" placeholder="مخصص" min="1" max="1000" style="width: 80px; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 6px; font-size: 13px; text-align: center;">
+          <button onclick="setCustomMinAccounts()" style="background: #28a745; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">تطبيق</button>
+        </div>
+      </div>
+
+      <div style="text-align: center; padding: 10px; background: #e8f5e8; border-radius: 8px; border: 1px solid #c3e6cb;">
+        <div style="font-size: 13px; color: #155724; margin-bottom: 4px;">الإعدادات الحالية</div>
+        <div style="font-size: 14px; color: #155724; font-weight: 600;">
+          <span id="currentMinAccounts">25</span> حساب كحد أدنى
+        </div>
+      </div>
     </div>
 
     <div id="progressBar"><div>0%</div></div>
@@ -234,6 +334,12 @@
     <div id="holdersInfo" style="text-align: center; margin: 20px 0; font-size: 18px; color: #333; display: none;">
       <strong>إجمالي عدد الحاملين (10$+): <span id="totalHolders">0</span></strong><br>
       <strong>سعر التوكن: $<span id="tokenPrice">0</span></strong>
+      <div id="scanStats" style="font-size: 14px; color: #666; margin-top: 10px; display: none;">
+        الإجمالي: <span id="totalScanned" style="color: #333;">0</span> | 
+        المؤهل: <span id="qualifiedCount" style="color: #4CAF50; font-weight: bold;">0</span> | 
+        غير مؤهل: <span id="unqualifiedCount" style="color: #ff9800;">0</span> | 
+        الفشل: <span id="failedCount" style="color: #f44336;">0</span>
+      </div>
     </div>
     
     <div class="table-container">
@@ -272,6 +378,15 @@
     let isScanning = false;
     let currentEventSource = null;
     
+    // متغيرات تتبع الإحصائيات
+    let totalScannedWallets = 0;
+    let qualifiedWallets = 0;
+    let unqualifiedWallets = 0;
+    let failedWallets = 0;
+    
+    // إعدادات الفحص
+    let minAccountsThreshold = 25;
+    
     function toggleScan() {
       if (isScanning) {
         stopScan();
@@ -297,16 +412,26 @@
       allWalletData = [];
       sortDirection = {};
       
+      // إعادة تعيين الإحصائيات
+      totalScannedWallets = 0;
+      qualifiedWallets = 0;
+      unqualifiedWallets = 0;
+      failedWallets = 0;
+      
       document.querySelector("#results").style.display = "none";
       document.querySelector("#results tbody").innerHTML = "";
       document.getElementById("holdersInfo").style.display = "none";
+      document.getElementById("scanStats").style.display = "none";
       document.getElementById("totalSummary").style.display = "none";
       updateProgress(0, 1);
 
       currentEventSource = new EventSourcePolyfill("/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mint }),
+        body: JSON.stringify({ 
+          mint: mint,
+          minAccounts: minAccountsThreshold
+        }),
       });
 
       currentEventSource.onmessage = function (e) {
@@ -346,25 +471,35 @@
           if (data.totalHolders) {
             document.getElementById("totalHolders").textContent = data.totalHolders;
             document.getElementById("holdersInfo").style.display = "block";
+            document.getElementById("scanStats").style.display = "block";
           }
 
           if (data.progress) {
             updateProgress(data.progress, data.total);
+            totalScannedWallets = data.progress;
+            updateScanStats();
           }
 
           if (data.batch) {
             // معالجة البيانات المجمعة
             data.results.forEach((wallet) => {
-              // حفظ البيانات للترتيب
-              allWalletData.push(wallet);
-              
-              // تحديث الإجماليات
-              totalReclaimableSOL += parseFloat(wallet.reclaimable);
-              totalProcessedWallets++;
-              totalTokenAccounts += wallet.accountsCount;
-              
-              // تحديث الملخص
-              updateSummary();
+              if (wallet.unqualified) {
+                // محفظة غير مؤهلة
+                unqualifiedWallets++;
+              } else {
+                // محفظة مؤهلة - حفظ البيانات للترتيب
+                allWalletData.push(wallet);
+                
+                // تحديث الإجماليات
+                totalReclaimableSOL += parseFloat(wallet.reclaimable);
+                totalProcessedWallets++;
+                totalTokenAccounts += wallet.accountsCount;
+                qualifiedWallets++;
+                
+                // تحديث الملخص
+                updateSummary();
+              }
+              updateScanStats();
             });
             
             // رسم الجدول
@@ -416,6 +551,14 @@
       document.getElementById("totalReclaimable").textContent = totalReclaimableSOL.toFixed(6);
       document.getElementById("totalWallets").textContent = totalProcessedWallets;
       document.getElementById("totalAccounts").textContent = totalTokenAccounts;
+    }
+
+    function updateScanStats() {
+      document.getElementById("totalScanned").textContent = totalScannedWallets;
+      document.getElementById("qualifiedCount").textContent = qualifiedWallets;
+      document.getElementById("unqualifiedCount").textContent = unqualifiedWallets;
+      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets;
+      document.getElementById("failedCount").textContent = failedWallets;
     }
 
     function copy(text) {
@@ -507,6 +650,51 @@
         tbody.appendChild(row);
       });
     }
+
+    // وظائف الإعدادات
+    function toggleSettings() {
+      const panel = document.getElementById('settingsPanel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function setMinAccounts(value) {
+      minAccountsThreshold = value;
+      updateSettingsDisplay();
+      updateActiveButtons();
+      toggleSettings(); // إغلاق نافذة الإعدادات
+    }
+
+    function setCustomMinAccounts() {
+      const customValue = parseInt(document.getElementById('customMinAccounts').value);
+      if (customValue && customValue > 0) {
+        minAccountsThreshold = customValue;
+        updateSettingsDisplay();
+        updateActiveButtons();
+        document.getElementById('customMinAccounts').value = '';
+        toggleSettings(); // إغلاق نافذة الإعدادات
+      }
+    }
+
+    function updateSettingsDisplay() {
+      document.getElementById('currentMinAccounts').textContent = minAccountsThreshold;
+    }
+
+    function updateActiveButtons() {
+      // تحديث أزرار الحسابات
+      document.querySelectorAll('.preset-btn-small[data-value]').forEach(btn => {
+        if (parseInt(btn.dataset.value) === minAccountsThreshold) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+
+    // تهيئة الإعدادات عند تحميل الصفحة
+    document.addEventListener('DOMContentLoaded', function() {
+      updateSettingsDisplay();
+      updateActiveButtons();
+    });
 
     // دالة الترتيب
     function sortTable(columnIndex) {

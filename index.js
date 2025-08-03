@@ -15,55 +15,130 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(__dirname));
 app.use(express.json());
 
-const RPC_URL = "https://proud-aged-flower.solana-mainnet.quiknode.pro/6c4369466a2cfc21c12af4a500501aa9b0093340";
+const RPC_URLS = [
+  "https://hidden-red-meme.solana-mainnet.quiknode.pro/92e0a8000b1100e99e63251c941bf60f073d6646",
+  "https://proud-aged-flower.solana-mainnet.quiknode.pro/6c4369466a2cfc21c12af4a500501aa9b0093340",
+  "https://boldest-burned-night.solana-mainnet.quiknode.pro/d7ebec04632ba9ca28466b8a5e8423bfaad53e2c"
+];
 const RENT_EXEMPT_LAMPORTS = 2039280; // تقريبي لحسابات التوكن
+
+// متغير لتتبع توزيع الطلبات
+let requestCounter = 0;
 
 // تحويل lamports إلى SOL
 function lamportsToSol(lamports) {
   return lamports / 1e9;
 }
 
-// استعلام عبر RPC
-async function rpc(method, params) {
+// اختيار RPC URL بالتناوب (50/50)
+function getNextRpcUrl() {
+  const url = RPC_URLS[requestCounter % RPC_URLS.length];
+  requestCounter++;
+  console.log(`🌐 استخدام RPC: ${url.includes('hidden-red-meme') ? 'الرابط الأول' : 'الرابط الثاني'} (الطلب #${requestCounter})`);
+  return url;
+}
+
+// استعلام عبر RPC مع توزيع الأحمال وإعادة المحاولة
+async function rpc(method, params, maxRetries = 3) {
   if (!fetch) {
     const nodeFetch = await import('node-fetch');
     fetch = nodeFetch.default;
   }
   
-  const res = await fetch(RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-  });
-  const data = await res.json();
-  return data.result;
-}
-
-// احصل على رصيد محفظة SOL
-async function getSolBalance(address) {
-  try {
-    const result = await rpc("getBalance", [address]);
-    const lamports = result?.value || result || 0;
-    return lamportsToSol(lamports);
-  } catch (error) {
-    console.error("خطأ في الحصول على رصيد SOL:", error);
-    return 0;
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const rpcUrl = getNextRpcUrl();
+      
+      const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params,
+        }),
+        timeout: 30000, // 30 ثانية timeout
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      
+      if (data.error) {
+        throw new Error(`RPC Error: ${data.error.message || data.error}`);
+      }
+      
+      return data.result;
+      
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت لـ ${method}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        // انتظار متزايد بين المحاولات
+        const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`⏳ انتظار ${waitTime}ms قبل المحاولة التالية...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
   }
+  
+  console.error(`❌ فشل في جميع المحاولات لـ ${method}:`, lastError);
+  throw lastError;
 }
 
-// احصل على حسابات التوكن لمحفظة معينة
-async function getTokenAccounts(owner, mint) {
-  const result = await rpc("getTokenAccountsByOwner", [
-    owner,
-    { mint },
-    { encoding: "jsonParsed" },
-  ]);
-  return result?.value || [];
+// احصل على رصيد محفظة SOL مع إعادة المحاولة
+async function getSolBalance(address, maxRetries = 3) {
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await rpc("getBalance", [address], 2); // محاولتان فقط لكل RPC call
+      const lamports = result?.value || result || 0;
+      return lamportsToSol(lamports);
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في getSolBalance للمحفظة ${address}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+  
+  console.error(`❌ فشل نهائي في getSolBalance للمحفظة ${address}:`, lastError);
+  throw lastError; // رمي الخطأ بدلاً من إرجاع 0
+}
+
+// احصل على حسابات التوكن لمحفظة معينة مع إعادة المحاولة
+async function getTokenAccounts(owner, mint, maxRetries = 3) {
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await rpc("getTokenAccountsByOwner", [
+        owner,
+        { mint },
+        { encoding: "jsonParsed" },
+      ], 2);
+      return result?.value || [];
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في getTokenAccounts:`, error.message);
+      
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+  
+  console.error(`❌ فشل نهائي في getTokenAccounts:`, lastError);
+  throw lastError;
 }
 
 // احصل على سعر التوكن بالدولار
@@ -180,100 +255,126 @@ async function getOwnerOfTokenAccount(accountPubkey) {
   return result?.value?.data?.parsed?.info?.owner || null;
 }
 
-// تحليل محفظة واحدة للبحث عن حسابات قابلة للإغلاق
-async function analyzeWallet(owner, mint, tokenPrice = 0) {
-  console.log(`🔍 تحليل المحفظة: ${owner}`);
+// تحليل محفظة واحدة مع إعادة المحاولة الشاملة
+async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAccounts = 25) {
+  let lastError;
   
-  try {
-    // الحصول على جميع حسابات التوكن في المحفظة (جميع الأنواع)
-    const allTokenAccounts = await rpc("getTokenAccountsByOwner", [
-      owner,
-      { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
-      { encoding: "jsonParsed" }
-    ]);
-    
-    const allAccounts = allTokenAccounts?.value || [];
-    console.log(`📄 إجمالي حسابات التوكن في المحفظة: ${allAccounts.length}`);
-    
-    // الحصول على حسابات التوكن المحدد فقط لحساب القيمة
-    const specificTokenAccounts = await getTokenAccounts(owner, mint);
-    
-    let tokenAccountsCount = 0;
-    let nftAccountsCount = 0;
-    let cleanupAccountsCount = 0;
-    let totalRent = 0;
-    let totalTokenBalance = 0;
-
-    // حساب rent لجميع حسابات التوكن
-    for (let acc of allAccounts) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔍 تحليل المحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
+      
+      // جلب جميع البيانات المطلوبة مع آلية إعادة المحاولة لكل طلب
+      let allTokenAccountsResult, specificTokenAccountsResult, solBalance;
+      
       try {
-        const info = acc.account.data.parsed.info;
-        const amount = parseFloat(info.tokenAmount.uiAmount) || 0;
-        const decimals = info.tokenAmount.decimals;
+        [allTokenAccountsResult, specificTokenAccountsResult, solBalance] = await Promise.all([
+          rpc("getTokenAccountsByOwner", [
+            owner,
+            { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+            { encoding: "jsonParsed" }
+          ], 2),
+          getTokenAccounts(owner, mint, 2),
+          getSolBalance(owner, 2)
+        ]);
+      } catch (parallelError) {
+        // إذا فشل الطلب المتوازي، جرب بشكل تسلسلي
+        console.warn(`⚠️ فشل الطلب المتوازي، محاولة تسلسلية...`);
+        allTokenAccountsResult = await rpc("getTokenAccountsByOwner", [
+          owner,
+          { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+          { encoding: "jsonParsed" }
+        ], 2);
         
-        // تصنيف الحسابات
-        if (amount === 0) {
-          tokenAccountsCount++;
-        } else if (decimals === 0 && amount === 1) {
-          nftAccountsCount++;
-        } else {
-          cleanupAccountsCount++;
+        specificTokenAccountsResult = await getTokenAccounts(owner, mint, 2);
+        solBalance = await getSolBalance(owner, 2);
+      }
+      
+      const allAccounts = allTokenAccountsResult?.value || [];
+      
+      // فحص سريع - إذا كان عدد الحسابات أقل من الحد المحدد، لا تكمل
+      if (allAccounts.length < minAccounts) {
+        console.log(`⏭️ المحفظة ${owner} لديها ${allAccounts.length} حساب فقط (أقل من ${minAccounts}) - تخطي`);
+        return null;
+      }
+      
+      let tokenAccountsCount = 0;
+      let nftAccountsCount = 0;
+      let cleanupAccountsCount = 0;
+      let totalTokenBalance = 0;
+
+      // حساب البيانات بشكل محسن
+      for (let acc of allAccounts) {
+        try {
+          const info = acc.account.data.parsed.info;
+          const amount = parseFloat(info.tokenAmount.uiAmount) || 0;
+          const decimals = info.tokenAmount.decimals;
+          
+          // تصنيف الحسابات
+          if (amount === 0) {
+            tokenAccountsCount++;
+          } else if (decimals === 0 && amount === 1) {
+            nftAccountsCount++;
+          } else {
+            cleanupAccountsCount++;
+          }
+        } catch (parseError) {
+          console.warn(`⚠️ خطأ في تحليل حساب - تجاهل:`, parseError.message);
+          continue;
         }
-        
-        // حساب rent لكل حساب توكن
-        totalRent += 0.00203928;
-        
-      } catch (error) {
-        console.error(`❌ خطأ في معالجة حساب التوكن:`, error);
-        continue;
+      }
+
+      // حساب قيمة التوكن المحدد
+      for (let acc of specificTokenAccountsResult) {
+        try {
+          const info = acc.account.data.parsed.info;
+          const amount = parseFloat(info.tokenAmount.uiAmount) || 0;
+          totalTokenBalance += amount;
+        } catch (parseError) {
+          console.warn(`⚠️ خطأ في تحليل توكن محدد - تجاهل:`, parseError.message);
+          continue;
+        }
+      }
+
+      const totalRent = allAccounts.length * 0.00203928;
+      const tokenValueUSD = totalTokenBalance * tokenPrice;
+      
+      
+
+      const result = {
+        address: owner,
+        solBalance: solBalance.toFixed(3),
+        reclaimable: totalRent.toFixed(6),
+        accountsCount: allAccounts.length,
+        tokenAccounts: tokenAccountsCount,
+        nftAccounts: nftAccountsCount,
+        cleanupAccounts: cleanupAccountsCount,
+        tokenValue: tokenValueUSD.toFixed(2),
+      };
+      
+      console.log(`✅ نجح تحليل المحفظة ${owner} - محاولة ${attempt}`);
+      return result;
+      
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في تحليل المحفظة ${owner}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        const waitTime = Math.min(2000 * attempt, 10000);
+        console.log(`⏳ انتظار ${waitTime}ms قبل المحاولة التالية...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
-
-    // حساب قيمة التوكن المحدد فقط
-    for (let acc of specificTokenAccounts) {
-      try {
-        const info = acc.account.data.parsed.info;
-        const amount = parseFloat(info.tokenAmount.uiAmount) || 0;
-        totalTokenBalance += amount;
-      } catch (error) {
-        console.error(`❌ خطأ في معالجة حساب التوكن المحدد:`, error);
-        continue;
-      }
-    }
-
-    // تحسين جلب رصيد SOL
-    const solBalance = await getSolBalance(owner);
-    const tokenValueUSD = totalTokenBalance * tokenPrice;
-    
-    if (totalRent < 0.05) {
-      console.log(`⚠️ المحفظة لا تستوفي الحد الأدنى: ${totalRent} < 0.001 SOL`);
-      return null;
-    }
-
-    const result = {
-      address: owner,
-      solBalance: solBalance.toFixed(3),
-      reclaimable: totalRent.toFixed(6),
-      accountsCount: allAccounts.length,
-      tokenAccounts: tokenAccountsCount,
-      nftAccounts: nftAccountsCount,
-      cleanupAccounts: cleanupAccountsCount,
-      tokenValue: tokenValueUSD.toFixed(2),
-    };
-    
-    console.log(`✅ نتيجة تحليل المحفظة:`, result);
-    return result;
-    
-  } catch (error) {
-    console.error(`❌ خطأ في تحليل المحفظة ${owner}:`, error);
-    return null;
   }
+  
+  console.error(`❌ فشل نهائي في تحليل المحفظة ${owner} بعد ${maxRetries} محاولات:`, lastError);
+  throw lastError; // رمي الخطأ بدلاً من إرجاع null
 }
 
 // نقطة البدء
 app.post("/analyze", async (req, res) => {
-  const { mint } = req.body;
+  const { mint, minAccounts = 25 } = req.body;
   console.log(`🚀 بدء تحليل التوكن: ${mint}`);
+  console.log(`⚙️ إعدادات الفحص: الحد الأدنى ${minAccounts} حساب`);
 
   try {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -310,56 +411,85 @@ app.post("/analyze", async (req, res) => {
     let processed = 0;
     let qualifiedResults = 0;
 
-    console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة...`);
+    console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة بشكل متوازي...`);
 
-    for (let owner of walletOwners) {
-      // التحقق من حالة الاتصال قبل معالجة كل محفظة
+    // معالجة المحافظ في مجموعات متوازية (5 محافظ في المرة الواحدة)
+    const BATCH_SIZE = 5;
+    const batches = [];
+    
+    for (let i = 0; i < walletOwners.length; i += BATCH_SIZE) {
+      batches.push(walletOwners.slice(i, i + BATCH_SIZE));
+    }
+
+    for (const batch of batches) {
+      // التحقق من حالة الاتصال قبل معالجة كل مجموعة
       if (res.destroyed || res.writableEnded) {
         console.log("🛑 تم قطع الاتصال - توقيف المعالجة");
         return;
       }
-      
-      try {
-        console.log(`📝 معالجة المحفظة ${processed + 1}/${walletOwners.length}: ${owner}`);
-        const data = await analyzeWallet(owner, mint, tokenPrice);
-        
-        // عرض المحافظ التي يمكنها استرداد أكثر من 0.001 SOL (مؤقتاً)
-        // ملاحظة: لعرض المحافظ التي تحتوي على 0.05+ يجب البحث عن محافظ بـ 25+ حساب توكن
-        if (data && parseFloat(data.reclaimable) >= 0.001) {
-          results.push(data);
-          qualifiedResults++;
-          console.log(`✅ محفظة مؤهلة #${qualifiedResults}: ${data.address} - يمكن استرداد ${data.reclaimable} SOL`);
-        } else {
-          console.log(`❌ محفظة غير مؤهلة: ${owner} - أقل من 0.05 SOL`);
-        }
 
-        processed++;
-        const progressData = { progress: processed, total: walletOwners.length };
-        console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%)`);
-        res.write(`data: ${JSON.stringify(progressData)}\n\n`);
+      // معالجة المجموعة بشكل متوازي مع إعادة المحاولة
+      const batchPromises = batch.map(async (owner) => {
+        let retries = 0;
+        const maxRetries = 3;
         
-      } catch (error) {
-        console.error(`❌ خطأ في معالجة المحفظة ${owner}:`, error);
-        processed++;
-        const progressData = { progress: processed, total: walletOwners.length };
-        res.write(`data: ${JSON.stringify(progressData)}\n\n`);
+        while (retries < maxRetries) {
+          try {
+            console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
+            const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts);
+            
+            if (data) {
+              console.log(`✅ محفظة مؤهلة: ${data.address} - يمكن استرداد ${data.reclaimable} SOL`);
+              return data;
+            } else {
+              console.log(`❌ محفظة غير مؤهلة: ${owner}`);
+              return { unqualified: true, address: owner };
+            }
+          } catch (error) {
+            retries++;
+            console.error(`❌ خطأ في معالجة المحفظة ${owner} (محاولة ${retries}/${maxRetries}):`, error.message);
+            
+            if (retries < maxRetries) {
+              const waitTime = Math.min(3000 * retries, 15000);
+              console.log(`⏳ إعادة محاولة المحفظة ${owner} بعد ${waitTime}ms...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            } else {
+              console.error(`❌ فشل نهائي في معالجة المحفظة ${owner} بعد ${maxRetries} محاولات`);
+              // لا تعيد null، بل تعيد خطأ ليتم التعامل معه
+              throw new Error(`فشل نهائي في معالجة المحفظة ${owner}`);
+            }
+          }
+        }
+      });
+
+      // انتظار انتهاء جميع محافظ المجموعة
+      const batchResults = await Promise.all(batchPromises);
+      
+      // إضافة النتائج الصالحة
+      const validResults = batchResults.filter(result => result !== null);
+      results.push(...validResults);
+      qualifiedResults += validResults.length;
+      
+      processed += batch.length;
+      
+      // إرسال التحديث
+      const progressData = { progress: processed, total: walletOwners.length };
+      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults}`);
+      res.write(`data: ${JSON.stringify(progressData)}\n\n`);
+      
+      // إرسال النتائج الجديدة إذا وجدت
+      if (validResults.length > 0) {
+        const batchData = { 
+          batch: true, 
+          results: validResults, 
+          batchNumber: Math.floor(processed / BATCH_SIZE),
+          totalBatches: batches.length
+        };
+        res.write(`data: ${JSON.stringify(batchData)}\n\n`);
       }
     }
 
     console.log(`🎯 انتهاء المعالجة - النتائج المؤهلة: ${results.length}/${walletOwners.length}`);
-    
-    // إرسال النتائج في مجموعات أصغر لتجنب مشاكل JSON الكبيرة
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < results.length; i += BATCH_SIZE) {
-      const batch = results.slice(i, i + BATCH_SIZE);
-      const batchData = { 
-        batch: true, 
-        results: batch, 
-        batchNumber: Math.floor(i / BATCH_SIZE) + 1,
-        totalBatches: Math.ceil(results.length / BATCH_SIZE)
-      };
-      res.write(`data: ${JSON.stringify(batchData)}\n\n`);
-    }
     
     const finalData = { done: true, totalResults: results.length };
     console.log("📤 إرسال إشارة الانتهاء");
