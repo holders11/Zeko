@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(__dirname));
 app.use(express.json());
 
-const RPC_URL = "https://solana-mainnet.g.alchemy.com/v2/6rain1NKlUDCWh8lr9d0kN_e0dKkOd_T";
+const RPC_URL = "https://solana-mainnet.g.alchemy.com/v2/XRKeC6WoPqsitTEW8TX0A";
 const RENT_EXEMPT_LAMPORTS = 2039280; // تقريبي لحسابات التوكن
 
 // تحويل lamports إلى SOL
