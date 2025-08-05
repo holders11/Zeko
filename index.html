@@ -12,30 +12,207 @@
       padding: 15px; 
       margin: 0;
       background: #f5f5f5;
+      transition: background-color 0.3s ease, color 0.3s ease;
     }
-    
+
+    /* الوضع الليلي المحسن */
+    body.dark-mode {
+      background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+      color: #e8eaed;
+    }
+
+    body.dark-mode .container {
+      background: linear-gradient(145deg, #1e2328 0%, #2d3748 100%);
+      color: #e8eaed;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    body.dark-mode h2 {
+      color: #ffffff;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    body.dark-mode input {
+      background: linear-gradient(145deg, #2d3748 0%, #1a202c 100%);
+      border: 2px solid rgba(255,255,255,0.1);
+      color: #e8eaed;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    body.dark-mode input:focus {
+      border-color: #4ade80;
+      box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.1), inset 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    body.dark-mode input::placeholder {
+      color: #9ca3af;
+    }
+
+    body.dark-mode button {
+      background: linear-gradient(145deg, #4ade80 0%, #22c55e 100%);
+      box-shadow: 0 4px 12px rgba(74, 222, 128, 0.25);
+      border: none;
+    }
+
+    body.dark-mode button:hover {
+      background: linear-gradient(145deg, #22c55e 0%, #16a34a 100%);
+      box-shadow: 0 6px 16px rgba(74, 222, 128, 0.35);
+      transform: translateY(-1px);
+    }
+
+    body.dark-mode button.stop-button {
+      background: linear-gradient(145deg, #ef4444 0%, #dc2626 100%);
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+    }
+
+    body.dark-mode button.stop-button:hover {
+      background: linear-gradient(145deg, #dc2626 0%, #b91c1c 100%);
+      box-shadow: 0 6px 16px rgba(239, 68, 68, 0.35);
+    }
+
+    body.dark-mode table {
+      background: linear-gradient(145deg, #1e2328 0%, #2d3748 100%);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    body.dark-mode th {
+      background: linear-gradient(145deg, #374151 0%, #4b5563 100%);
+      color: #ffffff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+      border-bottom: 2px solid rgba(255,255,255,0.1);
+    }
+
+    body.dark-mode td {
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      color: #e8eaed;
+    }
+
+    body.dark-mode tr:hover {
+      background: linear-gradient(145deg, rgba(74, 222, 128, 0.05) 0%, rgba(34, 197, 94, 0.05) 100%);
+    }
+
+    body.dark-mode #progressBar {
+      background: linear-gradient(145deg, #374151 0%, #4b5563 100%);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    body.dark-mode #progressBar > div {
+      background: linear-gradient(45deg, #4ade80, #22c55e, #16a34a);
+      box-shadow: 0 2px 8px rgba(74, 222, 128, 0.3);
+    }
+
+    body.dark-mode #settingsPanel {
+      background: linear-gradient(145deg, #2d3748 0%, #1a202c 100%) !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      color: #e8eaed;
+      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+    }
+
+    body.dark-mode #serverPanel {
+      background: linear-gradient(145deg, #1e3a52 0%, #2d4a63 100%) !important;
+      border: 1px solid rgba(59, 130, 246, 0.2) !important;
+      color: #e8eaed;
+      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+    }
+
+    body.dark-mode .preset-btn-small {
+      background: linear-gradient(145deg, #374151 0%, #4b5563 100%);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: #e8eaed;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    body.dark-mode .preset-btn-small:hover {
+      background: linear-gradient(145deg, #4b5563 0%, #374151 100%);
+      border-color: #3b82f6;
+      box-shadow: 0 4px 8px rgba(59, 130, 246, 0.2);
+      transform: translateY(-1px);
+    }
+
+    body.dark-mode .preset-btn-small.active {
+      background: linear-gradient(145deg, #3b82f6 0%, #2563eb 100%);
+      color: white;
+      border-color: #3b82f6;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    body.dark-mode .copy-notification {
+      background: linear-gradient(145deg, #22c55e 0%, #16a34a 100%);
+      box-shadow: 0 8px 25px rgba(34, 197, 94, 0.4);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    body.dark-mode #holdersInfo {
+      color: #ffffff;
+    }
+
+    body.dark-mode #holdersInfo strong {
+      color: #ffffff;
+    }
+
+    body.dark-mode #scanStats {
+      color: #ffffff;
+    }
+
+    body.dark-mode #scanStats span {
+      color: inherit;
+    }
+
+    body.dark-mode #totalScanned {
+      color: #ffffff !important;
+    }
+
+    body.dark-mode #qualifiedCount {
+      color: #4ade80 !important;
+    }
+
+    body.dark-mode #unqualifiedCount {
+      color: #fbbf24 !important;
+    }
+
+    body.dark-mode #failedCount {
+      color: #ef4444 !important;
+    }
+
+    body.dark-mode #totalSummary {
+      background: linear-gradient(145deg, #064e3b 0%, #065f46 100%);
+      border: 2px solid #10b981;
+      box-shadow: 0 8px 25px rgba(16, 185, 129, 0.2);
+      color: #e8eaed;
+    }
+
+    body.dark-mode #totalSummary h3 {
+      color: #ffffff;
+    }
+
+    body.dark-mode #totalReclaimable {
+      color: #000000 !important;
+    }
+
     .container {
       max-width: 800px;
-      margin: 0 auto;
+      margin: 60px auto 0 auto;
       background: white;
       padding: 20px;
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
-    
+
     h2 {
       text-align: center;
       color: #333;
       margin-bottom: 30px;
     }
-    
+
     .input-group {
       display: flex;
       gap: 10px;
       margin-bottom: 20px;
       flex-wrap: wrap;
     }
-    
+
     input {
       flex: 1;
       min-width: 250px;
@@ -45,11 +222,11 @@
       border-radius: 5px;
       outline: none;
     }
-    
+
     input:focus {
       border-color: #4CAF50;
     }
-    
+
     button {
       padding: 12px 25px;
       font-size: 16px;
@@ -60,19 +237,19 @@
       cursor: pointer;
       transition: background 0.3s;
     }
-    
+
     button:hover {
       background: #45a049;
     }
-    
+
     button.stop-button {
       background: #f44336;
     }
-    
+
     button.stop-button:hover {
       background: #da190b;
     }
-    
+
     #progressBar {
       width: 100%;
       background: #eee;
@@ -81,7 +258,7 @@
       overflow: hidden;
       margin: 20px 0;
     }
-    
+
     #progressBar > div {
       height: 100%;
       background: linear-gradient(45deg, #4CAF50, #66BB6A);
@@ -92,7 +269,7 @@
       transition: width 0.3s;
       font-weight: bold;
     }
-    
+
     table {
       border-collapse: collapse;
       margin-top: 20px;
@@ -102,7 +279,7 @@
       overflow: hidden;
       box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
-    
+
     th {
       background: #4CAF50;
       color: white;
@@ -110,86 +287,86 @@
       text-align: center;
       font-weight: bold;
     }
-    
+
     td {
       border-bottom: 1px solid #eee;
       padding: 12px 8px;
       text-align: center;
     }
-    
+
     tr:hover {
       background: #f9f9f9;
     }
-    
+
     .copy-btn {
       cursor: pointer;
       color: #4CAF50;
       font-size: 18px;
       transition: transform 0.2s;
     }
-    
+
     .copy-btn:hover {
       transform: scale(1.2);
     }
-    
+
     .sort-arrow {
       font-size: 12px;
       margin-left: 5px;
     }
-    
+
     th[onclick]:hover {
       background: #45a049;
     }
-    
+
     /* تصميم متجاوب للهاتف المحمول */
     @media (max-width: 768px) {
       body {
         padding: 10px;
       }
-      
+
       .container {
         padding: 15px;
       }
-      
+
       h2 {
         font-size: 1.5em;
         margin-bottom: 20px;
       }
-      
+
       .input-group {
         flex-direction: column;
       }
-      
+
       input {
         min-width: 100%;
         font-size: 16px; /* منع التكبير في iOS */
       }
-      
+
       button {
         width: 100%;
         padding: 15px;
         font-size: 18px;
       }
-      
+
       table {
         font-size: 14px;
       }
-      
+
       th, td {
         padding: 8px 4px;
       }
-      
+
       /* جعل الجدول قابل للتمرير أفقياً */
       .table-container {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
       }
-      
+
       /* تقليل حجم العناوين في الجدول */
       th:first-child { min-width: 80px; max-width: 80px; }
       th:nth-child(2), th:nth-child(3) { min-width: 70px; }
       th:last-child { min-width: 40px; }
-      
+
       /* تحسين خانة العنوان */
       td:first-child { 
         font-family: monospace; 
@@ -200,20 +377,20 @@
         white-space: nowrap;
       }
     }
-    
+
     @media (max-width: 480px) {
       .container {
         padding: 10px;
       }
-      
+
       h2 {
         font-size: 1.3em;
       }
-      
+
       table {
         font-size: 12px;
       }
-      
+
       th, td {
         padding: 6px 2px;
       }
@@ -246,19 +423,60 @@
       border-color: #007bff;
     }
 
-    /* تصميم أيقونة الإعدادات الحديثة */
-    #settingsButton {
+    /* تصميم أيقونات الإعدادات والخادم */
+    #settingsButton, #serverButton {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
       border: none;
-      border-radius: 12px;
-      padding: 14px 16px;
-      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      border-radius: 8px;
+      padding: 8px 10px;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       position: relative;
       overflow: hidden;
+      min-width: 40px;
     }
 
-    #settingsButton:before {
+    #serverButton {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
+      box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+    }
+
+    /* أيقونة الوضع الليلي في الزاوية العلوية */
+    #themeButton {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: transparent;
+      border: none;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: none;
+      box-shadow: none;
+    }
+
+    #themeButton:hover {
+      background: transparent;
+      transform: none;
+      box-shadow: none;
+    }
+
+    body.dark-mode #themeButton {
+      background: transparent;
+      box-shadow: none;
+    }
+
+    body.dark-mode #themeButton:hover {
+      background: transparent;
+      box-shadow: none;
+    }
+
+    #settingsButton:before, #serverButton:before {
       content: '';
       position: absolute;
       top: 0;
@@ -271,11 +489,17 @@
 
     #settingsButton:hover {
       background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%) !important;
-      transform: translateY(-3px) scale(1.05);
-      box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+      transform: translateY(-2px) scale(1.05);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
     }
 
-    #settingsButton:hover:before {
+    #serverButton:hover {
+      background: linear-gradient(135deg, #218838 0%, #1e9ba4 100%) !important;
+      transform: translateY(-2px) scale(1.05);
+      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.5);
+    }
+
+    #settingsButton:hover:before, #serverButton:hover:before {
       left: 100%;
     }
 
@@ -283,10 +507,25 @@
       transform: rotate(180deg);
     }
 
-    .settings-icon {
-      transition: transform 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    #serverButton:hover .server-icon {
+      transform: scale(1.2);
+    }
+
+    #themeButton:hover .theme-icon {
+      transform: none;
+    }
+
+    .settings-icon, .server-icon {
+      transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
       display: inline-block;
-      font-size: 18px;
+      font-size: 14px;
+    }
+
+    .theme-icon {
+      transition: none;
+      display: inline-block;
+      font-size: 20px;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
     }
 
     /* تصميم رسالة النسخ المنبثقة */
@@ -315,12 +554,20 @@
 <body>
   <div class="container">
     <h2>فحص المحافظ - البحث عن محافظ تحتوي على حسابات توكن قابلة للإغلاق</h2>
-    
+
+    <!-- أيقونة الوضع الليلي في الزاوية العلوية -->
+    <button id="themeButton" onclick="toggleDarkMode()">
+      <span class="theme-icon">🌙</span>
+    </button>
+
     <div class="input-group">
       <input type="text" id="mint" placeholder="أدخل عنوان التوكن" />
       <button id="scanButton" onclick="toggleScan()">فحص</button>
       <button id="settingsButton" onclick="toggleSettings()">
         <span class="settings-icon">⚙️</span>
+      </button>
+      <button id="serverButton" onclick="toggleServerSettings()">
+        <span class="server-icon">🌐</span>
       </button>
     </div>
 
@@ -329,7 +576,7 @@
       <h4 style="margin: 0 0 12px 0; color: #495057; text-align: center; font-size: 16px; font-weight: 600;">
         ⚙️ إعدادات الفحص
       </h4>
-      
+
       <div style="margin-bottom: 15px;">
         <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #6c757d; font-size: 14px;">
           الحد الأدنى للحسابات:
@@ -353,8 +600,33 @@
       </div>
     </div>
 
+    <!-- نافذة إعدادات الخادم -->
+    <div id="serverPanel" style="display: none; background: #f0f8ff; border: 1px solid #b8daff; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+      <h4 style="margin: 0 0 12px 0; color: #004085; text-align: center; font-size: 16px; font-weight: 600;">
+        🌐 إعدادات الخادم
+      </h4>
+
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #004085; font-size: 14px;">
+          مصدر السعر:
+        </label>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 10px;">
+          <button onclick="setServerSource('both')" class="preset-btn-small server-btn" data-source="both">كلاهما</button>
+          <button onclick="setServerSource('dexscreener')" class="preset-btn-small server-btn" data-source="dexscreener">DexScreener فقط</button>
+          <button onclick="setServerSource('pumpfun')" class="preset-btn-small server-btn" data-source="pumpfun">PumpFun فقط (افتراضي)</button>
+        </div>
+      </div>
+
+      <div style="text-align: center; padding: 10px; background: #d1ecf1; border-radius: 8px; border: 1px solid #bee5eb;">
+        <div style="font-size: 13px; color: #0c5460; margin-bottom: 4px;">الخادم الحالي</div>
+        <div style="font-size: 14px; color: #0c5460; font-weight: 600;">
+          <span id="currentServerSource">PumpFun فقط</span>
+        </div>
+      </div>
+    </div>
+
     <div id="progressBar"><div>0%</div></div>
-    
+
     <div id="holdersInfo" style="text-align: center; margin: 20px 0; font-size: 18px; color: #333; display: none;">
       <strong>إجمالي عدد الحاملين (10$+): <span id="totalHolders">0</span></strong><br>
       <strong>سعر التوكن: $<span id="tokenPrice">0</span></strong>
@@ -365,7 +637,7 @@
         الفشل: <span id="failedCount" style="color: #f44336;">0</span>
       </div>
     </div>
-    
+
     <div class="table-container">
       <table id="results" style="display:none">
         <thead>
@@ -381,7 +653,7 @@
         <tbody></tbody>
       </table>
     </div>
-    
+
     <div id="totalSummary" style="display: none; text-align: center; margin: 20px 0; padding: 15px; background: #e8f5e8; border-radius: 8px; border: 2px solid #4CAF50;">
       <h3 style="margin: 0; color: #2e7d32;">📊 ملخص إجمالي</h3>
       <p style="font-size: 18px; margin: 10px 0;">
@@ -392,7 +664,7 @@
       </p>
     </div>
   </div>
-  
+
   <!-- رسالة النسخ المنبثقة -->
   <div id="copyNotification" class="copy-notification">تم النسخ ✅</div>
 
@@ -406,16 +678,18 @@
     let allWalletData = [];
     let isScanning = false;
     let currentEventSource = null;
-    
+
     // متغيرات تتبع الإحصائيات
     let totalScannedWallets = 0;
     let qualifiedWallets = 0;
     let unqualifiedWallets = 0;
     let failedWallets = 0;
-    
+
     // إعدادات الفحص
-    let minAccountsThreshold = 0.05;
-    
+    let minAccountsThreshold = 0.05; // الحد الأدنى للحاملين 0.05 SOL rent
+    let serverSource = 'pumpfun'; // both, dexscreener, pumpfun
+    let isDarkMode = true; // الوضع الليلي افتراضي
+
     function toggleScan() {
       if (isScanning) {
         stopScan();
@@ -423,30 +697,30 @@
         startScan();
       }
     }
-    
+
     function startScan() {
       const mint = document.getElementById("mint").value.trim();
       if (!mint) return alert("يرجى إدخال عنوان توكن");
-      
+
       // تغيير حالة الزر
       isScanning = true;
       const scanButton = document.getElementById("scanButton");
       scanButton.textContent = "إيقاف";
       scanButton.className = "stop-button";
-      
+
       // إعادة تعيين القيم
       totalReclaimableSOL = 0;
       totalProcessedWallets = 0;
       totalTokenAccounts = 0;
       allWalletData = [];
       sortDirection = {};
-      
+
       // إعادة تعيين الإحصائيات
       totalScannedWallets = 0;
       qualifiedWallets = 0;
       unqualifiedWallets = 0;
       failedWallets = 0;
-      
+
       document.querySelector("#results").style.display = "none";
       document.querySelector("#results tbody").innerHTML = "";
       document.getElementById("holdersInfo").style.display = "none";
@@ -459,7 +733,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           mint: mint,
-          minAccounts: minAccountsThreshold
+          minAccounts: minAccountsThreshold,
+          serverSource: serverSource
         }),
       });
 
@@ -487,7 +762,7 @@
               return;
             }
           }
-          
+
           // معالجة البيانات الجاهزة للمتابعة
           if (data.readyToContinue) {
             console.log("📦 تم استلام قائمة المحافظ:", data.walletOwners?.length || 0);
@@ -518,22 +793,22 @@
               } else {
                 // محفظة مؤهلة - حفظ البيانات للترتيب
                 allWalletData.push(wallet);
-                
+
                 // تحديث الإجماليات
                 totalReclaimableSOL += parseFloat(wallet.reclaimable);
                 totalProcessedWallets++;
                 totalTokenAccounts += wallet.accountsCount;
                 qualifiedWallets++;
-                
+
                 // تحديث الملخص
                 updateSummary();
               }
               updateScanStats();
             });
-            
+
             // رسم الجدول
             renderTable();
-            
+
             if (!document.querySelector("#results").style.display || document.querySelector("#results").style.display === "none") {
               document.querySelector("#results").style.display = "table";
               document.getElementById("totalSummary").style.display = "block";
@@ -552,7 +827,7 @@
         }
       };
     }
-    
+
     function stopScan() {
       if (currentEventSource) {
         currentEventSource.close();
@@ -561,7 +836,7 @@
       resetScanButton();
       alert("تم إيقاف عملية الفحص");
     }
-    
+
     function resetScanButton() {
       isScanning = false;
       const scanButton = document.getElementById("scanButton");
@@ -599,7 +874,7 @@
     function showCopyNotification() {
       const notification = document.getElementById('copyNotification');
       notification.classList.add('show');
-      
+
       setTimeout(() => {
         notification.classList.remove('show');
       }, 2000);
@@ -610,7 +885,7 @@
       const evt = {};
       const xhr = new XMLHttpRequest();
       let isClosed = false;
-      
+
       xhr.open(options.method || "POST", url);
       xhr.setRequestHeader("Content-Type", "application/json");
       xhr.send(options.body);
@@ -619,11 +894,11 @@
 
       xhr.onreadystatechange = () => {
         if (isClosed) return;
-        
+
         if (xhr.readyState === 3 || xhr.readyState === 4) {
           const responseText = xhr.responseText.substring(lastIndex);
           lastIndex = xhr.responseText.length;
-          
+
           const lines = responseText.split("\n");
           lines.forEach((line) => {
             if (line.startsWith("data:")) {
@@ -639,7 +914,7 @@
               }
             }
           });
-          
+
           // إغلاق الاتصال عند انتهاء الاستجابة
           if (xhr.readyState === 4) {
             isClosed = true;
@@ -673,7 +948,7 @@
     function renderTable() {
       const tbody = document.querySelector("#results tbody");
       tbody.innerHTML = "";
-      
+
       allWalletData.forEach((wallet) => {
         const row = document.createElement("tr");
         const accountsInfo = `${wallet.accountsCount} (T:${wallet.tokenAccounts || 0}, N:${wallet.nftAccounts || 0}, C:${wallet.cleanupAccounts || 0})`;
@@ -695,6 +970,15 @@
     function toggleSettings() {
       const panel = document.getElementById('settingsPanel');
       panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      // إغلاق نافذة الخادم إذا كانت مفتوحة
+      document.getElementById('serverPanel').style.display = 'none';
+    }
+
+    function toggleServerSettings() {
+      const panel = document.getElementById('serverPanel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      // إغلاق نافذة الإعدادات إذا كانت مفتوحة
+      document.getElementById('settingsPanel').style.display = 'none';
     }
 
     function setMinAccounts(value) {
@@ -705,7 +989,7 @@
     }
 
     function setCustomMinAccounts() {
-      const customValue = parseInt(document.getElementById('customMinAccounts').value);
+      const customValue = parseFloat(document.getElementById('customMinAccounts').value);
       if (customValue && customValue > 0) {
         minAccountsThreshold = customValue;
         updateSettingsDisplay();
@@ -715,14 +999,68 @@
       }
     }
 
+    function setServerSource(source) {
+      serverSource = source;
+      updateServerDisplay();
+      updateServerButtons();
+      toggleServerSettings(); // إغلاق نافذة إعدادات الخادم
+    }
+
     function updateSettingsDisplay() {
       document.getElementById('currentMinAccounts').textContent = minAccountsThreshold;
+    }
+
+    function updateServerDisplay() {
+      const sourceText = {
+        'both': 'كلاهما (DexScreener → PumpFun)',
+        'dexscreener': 'DexScreener فقط',
+        'pumpfun': 'PumpFun فقط'
+      };
+      document.getElementById('currentServerSource').textContent = sourceText[serverSource];
+    }
+
+    function toggleDarkMode() {
+      isDarkMode = !isDarkMode;
+      document.body.classList.toggle('dark-mode', isDarkMode);
+
+      // تحديث أيقونة الوضع
+      const themeIcon = document.querySelector('.theme-icon');
+      themeIcon.textContent = isDarkMode ? '☀️' : '🌙';
+
+      // حفظ الإعداد في localStorage
+      localStorage.setItem('darkMode', isDarkMode);
+    }
+
+    function initializeTheme() {
+      // استرجاع الإعداد من localStorage أو استخدام الافتراضي (true)
+      const savedTheme = localStorage.getItem('darkMode');
+      isDarkMode = savedTheme !== null ? JSON.parse(savedTheme) : true;
+
+      // تطبيق الوضع
+      document.body.classList.toggle('dark-mode', isDarkMode);
+
+      // تحديث الأيقونة
+      const themeIcon = document.querySelector('.theme-icon');
+      if (themeIcon) {
+        themeIcon.textContent = isDarkMode ? '☀️' : '🌙';
+      }
     }
 
     function updateActiveButtons() {
       // تحديث أزرار الحسابات
       document.querySelectorAll('.preset-btn-small[data-value]').forEach(btn => {
-        if (parseInt(btn.dataset.value) === minAccountsThreshold) {
+        if (parseFloat(btn.dataset.value) === minAccountsThreshold) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+
+    function updateServerButtons() {
+      // تحديث أزرار الخادم
+      document.querySelectorAll('.server-btn[data-source]').forEach(btn => {
+        if (btn.dataset.source === serverSource) {
           btn.classList.add('active');
         } else {
           btn.classList.remove('active');
@@ -732,8 +1070,11 @@
 
     // تهيئة الإعدادات عند تحميل الصفحة
     document.addEventListener('DOMContentLoaded', function() {
+      initializeTheme(); // تهيئة الوضع الليلي أولاً
       updateSettingsDisplay();
       updateActiveButtons();
+      updateServerDisplay();
+      updateServerButtons();
     });
 
     // دالة الترتيب
@@ -748,12 +1089,12 @@
       } else {
         sortDirection[columnIndex] = 'asc';
       }
-      
+
       // إعادة تعيين أسهم الترتيب
       document.querySelectorAll('.sort-arrow').forEach(arrow => {
         arrow.textContent = '⇅';
       });
-      
+
       // تحديث السهم للعمود المحدد
       const currentArrow = document.querySelectorAll('.sort-arrow')[columnIndex];
       if (sortDirection[columnIndex] === 'asc') {
@@ -763,7 +1104,7 @@
       } else {
         currentArrow.textContent = '⇅';
       }
-      
+
       // ترتيب البيانات أو إعادتها للوضع العادي
       if (sortDirection[columnIndex] === 'normal') {
         // إعادة الترتيب للوضع الأصلي (حسب الـ reclaimable بشكل تنازلي)
@@ -773,7 +1114,7 @@
       } else {
         allWalletData.sort((a, b) => {
           let valueA, valueB;
-          
+
           switch(columnIndex) {
             case 0: // العنوان
               valueA = a.address.toLowerCase();
@@ -798,7 +1139,7 @@
             default:
               return 0;
           }
-          
+
           if (sortDirection[columnIndex] === 'asc') {
             return valueA > valueB ? 1 : valueA < valueB ? -1 : 0;
           } else {
@@ -806,7 +1147,7 @@
           }
         });
       }
-      
+
       // إعادة رسم الجدول
       renderTable();
     }
