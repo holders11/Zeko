@@ -144,15 +144,67 @@ async function getTokenAccounts(owner, mint, maxRetries = 3) {
 // احصل على سعر التوكن بالدولار
 async function getTokenPrice(mint) {
   try {
+    // أولاً جرب DexScreener
     const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
     const data = await response.json();
     
     if (data.pairs && data.pairs.length > 0) {
-      return parseFloat(data.pairs[0].priceUsd) || 0;
+      const price = parseFloat(data.pairs[0].priceUsd) || 0;
+      console.log(`💰 سعر من DexScreener: $${price}`);
+      return price;
     }
-    return 0;
+    
+    // إذا لم يجد في DexScreener، جرب PumpFun API
+    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة PumpFun...");
+    return await getPumpFunPrice(mint);
+    
   } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن:", error);
+    console.error("خطأ في الحصول على سعر التوكن من DexScreener:", error);
+    // محاولة PumpFun كبديل
+    try {
+      return await getPumpFunPrice(mint);
+    } catch (pumpError) {
+      console.error("خطأ في الحصول على سعر التوكن من PumpFun:", pumpError);
+      return 0;
+    }
+  }
+}
+
+// احصل على سعر التوكن من PumpFun
+async function getPumpFunPrice(mint) {
+  try {
+    console.log(`🚀 البحث عن سعر التوكن ${mint} في PumpFun...`);
+    
+    // استخدام REST API بدلاً من WebSocket للبساطة
+    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data && data.usd_market_cap && data.total_supply) {
+      // حساب السعر من market cap و total supply
+      const price = data.usd_market_cap / data.total_supply;
+      console.log(`💰 سعر من PumpFun: $${price}`);
+      return price;
+    }
+    
+    // إذا لم توجد البيانات المطلوبة، جرب من خلال virtual_sol_reserves
+    if (data && data.virtual_sol_reserves && data.virtual_token_reserves) {
+      // تحويل SOL إلى USD (افتراض 1 SOL = $150 تقريباً)
+      const SOL_PRICE = 150; // يمكن تحديثه لاحقاً من API منفصل
+      const price = (data.virtual_sol_reserves * SOL_PRICE) / data.virtual_token_reserves;
+      console.log(`💰 سعر محسوب من reserves في PumpFun: $${price}`);
+      return price;
+    }
+    
+    console.log("⚠️ لم يتم العثور على بيانات السعر في PumpFun");
+    return 0;
+    
+  } catch (error) {
+    console.error("خطأ في الحصول على سعر التوكن من PumpFun:", error);
     return 0;
   }
 }

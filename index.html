@@ -230,12 +230,14 @@
       font-size: 13px;
       font-weight: 500;
       min-width: 45px;
+      color: #000000;
     }
 
     .preset-btn-small:hover {
       background: #e9ecef;
       border-color: #007bff;
       transform: translateY(-1px);
+      color: #000000;
     }
 
     .preset-btn-small.active {
@@ -286,6 +288,28 @@
       display: inline-block;
       font-size: 18px;
     }
+
+    /* تصميم رسالة النسخ المنبثقة */
+    .copy-notification {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #4CAF50;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .copy-notification.show {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
@@ -311,12 +335,12 @@
           الحد الأدنى للحسابات:
         </label>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 10px;">
-          <button onclick="setMinAccounts(25)" class="preset-btn-small" data-value="25">25</button>
-          <button onclick="setMinAccounts(50)" class="preset-btn-small" data-value="50">50</button>
-          <button onclick="setMinAccounts(100)" class="preset-btn-small" data-value="100">100</button>
+          <button onclick="setMinAccounts(0.05)" class="preset-btn-small" data-value="0.05">0.05</button>
+          <button onclick="setMinAccounts(0.10)" class="preset-btn-small" data-value="0.10">0.10</button>
+          <button onclick="setMinAccounts(0.20)" class="preset-btn-small" data-value="0.20">0.20</button>
         </div>
-        <div style="display: flex; gap: 8px; justify-content: center; align-items: center;">
-          <input type="number" id="customMinAccounts" placeholder="مخصص" min="1" max="1000" style="width: 80px; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 6px; font-size: 13px; text-align: center;">
+        <div style="display: flex; flex-direction: column; gap: 8px; align-items: center;">
+          <input type="number" id="customMinAccounts" placeholder="مخصص" min="1" max="1000" style="width: 120px; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 6px; font-size: 13px; text-align: center;">
           <button onclick="setCustomMinAccounts()" style="background: #28a745; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">تطبيق</button>
         </div>
       </div>
@@ -324,7 +348,7 @@
       <div style="text-align: center; padding: 10px; background: #e8f5e8; border-radius: 8px; border: 1px solid #c3e6cb;">
         <div style="font-size: 13px; color: #155724; margin-bottom: 4px;">الإعدادات الحالية</div>
         <div style="font-size: 14px; color: #155724; font-weight: 600;">
-          <span id="currentMinAccounts">25</span> حساب كحد أدنى
+          <span id="currentMinAccounts">0.05</span> حساب كحد أدنى
         </div>
       </div>
     </div>
@@ -367,7 +391,12 @@
         من <span id="totalWallets">0</span> محفظة مؤهلة | إجمالي <span id="totalAccounts">0</span> حساب توكن
       </p>
     </div>
-  </div></body>
+  </div>
+  
+  <!-- رسالة النسخ المنبثقة -->
+  <div id="copyNotification" class="copy-notification">تم النسخ ✅</div>
+
+</body>
 
   <script>
     let totalReclaimableSOL = 0;
@@ -385,7 +414,7 @@
     let failedWallets = 0;
     
     // إعدادات الفحص
-    let minAccountsThreshold = 25;
+    let minAccountsThreshold = 0.05;
     
     function toggleScan() {
       if (isScanning) {
@@ -562,7 +591,18 @@
     }
 
     function copy(text) {
-      navigator.clipboard.writeText(text).then(() => alert("تم النسخ"));
+      navigator.clipboard.writeText(text).then(() => {
+        showCopyNotification();
+      });
+    }
+
+    function showCopyNotification() {
+      const notification = document.getElementById('copyNotification');
+      notification.classList.add('show');
+      
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 2000);
     }
 
     // دعم POST مع EventSource
