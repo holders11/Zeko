@@ -633,8 +633,10 @@
       <div id="scanStats" style="font-size: 14px; color: #666; margin-top: 10px; display: none;">
         الإجمالي: <span id="totalScanned" style="color: #333;">0</span> | 
         المؤهل: <span id="qualifiedCount" style="color: #4CAF50; font-weight: bold;">0</span> | 
-        غير مؤهل: <span id="unqualifiedCount" style="color: #ff9800;">0</span> | 
-        الفشل: <span id="failedCount" style="color: #f44336;">0</span>
+غير مؤهل: <span id="unqualifiedCount" style="color: #ff9800;">0</span> | 
+        مستبعد Pump.fun: <span id="pumpfunCount" style="color: #9c27b0;">0</span> | 
+        قليل الحسابات: <span id="accountsCount" style="color: #607d8b;">0</span> | 
+        فاشل: <span id="failedCount" style="color: #f44336;">0</span>
       </div>
     </div>
 
@@ -684,10 +686,12 @@
     let qualifiedWallets = 0;
     let unqualifiedWallets = 0;
     let failedWallets = 0;
+    let pumpfunExcluded = 0;
+    let accountsExcluded = 0;
 
     // إعدادات الفحص
     let minAccountsThreshold = 0.05; // الحد الأدنى للحاملين 0.05 SOL rent
-    let serverSource = 'pumpfun'; // both, dexscreener, pumpfun
+    let serverSource = 'both'; // both, dexscreener, pumpfun
     let isDarkMode = true; // الوضع الليلي افتراضي
 
     function toggleScan() {
@@ -720,6 +724,8 @@
       qualifiedWallets = 0;
       unqualifiedWallets = 0;
       failedWallets = 0;
+      pumpfunExcluded = 0;
+      accountsExcluded = 0;
 
       document.querySelector("#results").style.display = "none";
       document.querySelector("#results tbody").innerHTML = "";
@@ -781,6 +787,11 @@
           if (data.progress) {
             updateProgress(data.progress, data.total);
             totalScannedWallets = data.progress;
+            
+            // تحديث الإحصائيات من البيانات الواردة
+            if (data.pumpfunExcluded !== undefined) pumpfunExcluded += data.pumpfunExcluded;
+            if (data.accountsExcluded !== undefined) accountsExcluded += data.accountsExcluded;
+            
             updateScanStats();
           }
 
@@ -788,7 +799,7 @@
             // معالجة البيانات المجمعة
             data.results.forEach((wallet) => {
               if (wallet.unqualified) {
-                // محفظة غير مؤهلة
+                // محفظة غير مؤهلة - تصنيف حسب السبب
                 unqualifiedWallets++;
               } else {
                 // محفظة مؤهلة - حفظ البيانات للترتيب
@@ -861,7 +872,12 @@
       document.getElementById("totalScanned").textContent = totalScannedWallets;
       document.getElementById("qualifiedCount").textContent = qualifiedWallets;
       document.getElementById("unqualifiedCount").textContent = unqualifiedWallets;
-      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets;
+      document.getElementById("pumpfunCount").textContent = pumpfunExcluded;
+      document.getElementById("accountsCount").textContent = accountsExcluded;
+      
+      // الفاشل = الإجمالي - المؤهل - غير المؤهل - المستبعد
+      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets - pumpfunExcluded - accountsExcluded;
+      if (failedWallets < 0) failedWallets = 0; // تجنب القيم السالبة
       document.getElementById("failedCount").textContent = failedWallets;
     }
 

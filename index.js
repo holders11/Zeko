@@ -15,11 +15,30 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(__dirname));
 app.use(express.json());
 
+// فحص متغيرات البيئة
+console.log("🔍 فحص متغيرات البيئة:");
+console.log("RPC_URL:", process.env.RPC_URL ? "✅ معرف" : "❌ غير معرف");
+console.log("RPC_URL2:", process.env.RPC_URL2 ? "✅ معرف" : "❌ غير معرف");
+console.log("RPC_URL3:", process.env.RPC_URL3 ? "✅ معرف" : "❌ غير معرف");
+
 const RPC_URLS = [
-  "https://hidden-red-meme.solana-mainnet.quiknode.pro/92e0a8000b1100e99e63251c941bf60f073d6646",
-  "https://proud-aged-flower.solana-mainnet.quiknode.pro/6c4369466a2cfc21c12af4a500501aa9b0093340",
-  "https://boldest-burned-night.solana-mainnet.quiknode.pro/d7ebec04632ba9ca28466b8a5e8423bfaad53e2c"
-];
+  process.env.RPC_URL,
+  process.env.RPC_URL2,
+  process.env.RPC_URL3
+].filter(Boolean); // إزالة القيم الفارغة
+
+console.log(`📊 عدد الروابط المحملة: ${RPC_URLS.length}`);
+console.log("🌐 الروابط المستخدمة:");
+RPC_URLS.forEach((url, index) => {
+  const maskedUrl = url ? url.substring(0, 30) + "..." : "غير محدد";
+  console.log(`  ${index + 1}. ${maskedUrl}`);
+});
+
+// التحقق من وجود روابط RPC صحيحة
+if (RPC_URLS.length === 0) {
+  console.error("❌ خطأ: لم يتم تعيين أي من متغيرات البيئة RPC_URL, RPC_URL2, RPC_URL3");
+  process.exit(1);
+}
 const RENT_EXEMPT_LAMPORTS = 2039280; // تقريبي لحسابات التوكن
 
 // قائمة عناوين المنصات والحسابات المُستبعدة
@@ -49,11 +68,26 @@ function lamportsToSol(lamports) {
   return lamports / 1e9;
 }
 
-// اختيار RPC URL بالتناوب (50/50)
+// اختيار RPC URL بالتناوب (يتكيف مع عدد الروابط المتاحة)
 function getNextRpcUrl() {
-  const url = RPC_URLS[requestCounter % RPC_URLS.length];
+  if (RPC_URLS.length === 0) {
+    throw new Error('لا توجد روابط RPC متاحة');
+  }
+  
+  const index = requestCounter % RPC_URLS.length;
+  const url = RPC_URLS[index];
   requestCounter++;
-  console.log(`🌐 استخدام RPC: ${url.includes('hidden-red-meme') ? 'الرابط الأول' : 'الرابط الثاني'} (الطلب #${requestCounter})`);
+  
+  // تحديد اسم الرابط بناء على الفهرس
+  let linkName;
+  if (index === 0) linkName = 'الرابط الأول';
+  else if (index === 1) linkName = 'الرابط الثاني';
+  else if (index === 2) linkName = 'الرابط الثالث';
+  else linkName = `الرابط ${index + 1}`;
+  
+  console.log(`🌐 استخدام RPC: ${linkName} (فهرس: ${index}/${RPC_URLS.length - 1}, الطلب #${requestCounter})`);
+  console.log(`📝 URL المختصر: ${url ? url.substring(0, 40) + '...' : 'غير محدد'}`);
+  
   return url;
 }
 
@@ -361,6 +395,90 @@ async function getOwnerOfTokenAccount(accountPubkey) {
   return result?.value?.data?.parsed?.info?.owner || null;
 }
 
+// فحص ما إذا كان للمحفظة نشاط في Pump.fun
+async function hasPumpFunActivity(owner, maxRetries = 3) {
+  const PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+  const VALID_OPERATION_TYPES = ['create', 'buy', 'sell'];
+  
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔍 فحص نشاط Pump.fun للمحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
+      
+      // جلب آخر 20 معاملة للمحفظة
+      const signatures = await rpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
+      
+      if (!signatures || signatures.length === 0) {
+        console.log(`⏭️ لا توجد معاملات للمحفظة ${owner}`);
+        return false;
+      }
+      
+      console.log(`📜 تم العثور على ${signatures.length} معاملة، فحص التفاصيل...`);
+      
+      // فحص كل معاملة للبحث عن برنامج Pump.fun
+      for (let i = 0; i < signatures.length; i++) {
+        try {
+          const signature = signatures[i].signature;
+          
+          // جلب تفاصيل المعاملة
+          const transaction = await rpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2);
+          
+          if (transaction && transaction.transaction && transaction.transaction.message && transaction.transaction.message.instructions) {
+            const instructions = transaction.transaction.message.instructions;
+            
+            // فحص كل instruction في المعاملة
+            for (let instruction of instructions) {
+              // التحقق من أن programId يطابق Pump.fun
+              if (instruction.programId === PUMP_FUN_PROGRAM) {
+                // فحص ما إذا كان للتعليمة parsed data ونوع عملية صحيح
+                if (instruction.parsed && instruction.parsed.type) {
+                  const operationType = instruction.parsed.type.toLowerCase();
+                  
+                  if (VALID_OPERATION_TYPES.includes(operationType)) {
+                    console.log(`✅ تم العثور على عملية Pump.fun صحيحة (${operationType}) في المعاملة ${signature} للمحفظة ${owner}`);
+                    return true;
+                  }
+                }
+                
+                // في حالة عدم وجود parsed data، قد تكون العملية مشفرة
+                // نفحص ما إذا كان البرنامج صحيح على الأقل
+                console.log(`🔍 تم العثور على تعليمة Pump.fun في المعاملة ${signature} للمحفظة ${owner} لكن بدون parsed data`);
+                
+                // يمكن أن نقبل العملية إذا كان البرنامج صحيح حتى لو لم نستطع تحليل النوع
+                // أو يمكن أن نكون أكثر صرامة ونرفضها
+                // للأمان، سنقبلها إذا كان البرنامج صحيح
+                console.log(`✅ تم قبول عملية Pump.fun غير محللة في المعاملة ${signature} للمحفظة ${owner}`);
+                return true;
+              }
+            }
+          }
+        } catch (txError) {
+          console.warn(`⚠️ خطأ في فحص المعاملة ${i + 1} للمحفظة ${owner}:`, txError.message);
+          // الاستمرار في فحص المعاملات الأخرى
+          continue;
+        }
+      }
+      
+      console.log(`❌ لم يتم العثور على عمليات Pump.fun صحيحة في آخر ${signatures.length} معاملة للمحفظة ${owner}`);
+      return false;
+      
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في فحص نشاط Pump.fun للمحفظة ${owner}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        const waitTime = Math.min(1000 * attempt, 3000);
+        console.log(`⏳ انتظار ${waitTime}ms قبل المحاولة التالية...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+  }
+  
+  console.error(`❌ فشل نهائي في فحص نشاط Pump.fun للمحفظة ${owner}:`, lastError);
+  return false; // إرجاع false في حالة الفشل للأمان
+}
+
 // تحليل محفظة واحدة مع إعادة المحاولة الشاملة
 async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAccounts = 0.05) {
   let lastError;
@@ -544,6 +662,16 @@ app.post("/analyze", async (req, res) => {
         while (retries < maxRetries) {
           try {
             console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
+            
+            // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun
+            const hasPumpFun = await hasPumpFunActivity(owner, 2);
+            
+            if (!hasPumpFun) {
+              console.log(`❌ المحفظة ${owner} لا تحتوي على نشاط Pump.fun - تم تخطيها`);
+              return { unqualified: true, address: owner, reason: 'no_pumpfun_activity' };
+            }
+            
+            console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل`);
             const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts);
 
             if (data) {
@@ -551,7 +679,7 @@ app.post("/analyze", async (req, res) => {
               return data;
             } else {
               console.log(`❌ محفظة غير مؤهلة: ${owner}`);
-              return { unqualified: true, address: owner };
+              return { unqualified: true, address: owner, reason: 'low_accounts' };
             }
           } catch (error) {
             retries++;
@@ -573,16 +701,26 @@ app.post("/analyze", async (req, res) => {
       // انتظار انتهاء جميع محافظ المجموعة
       const batchResults = await Promise.all(batchPromises);
 
-      // إضافة النتائج الصالحة
-      const validResults = batchResults.filter(result => result !== null);
+      // إضافة النتائج الصالحة (فقط المحافظ التي لديها نشاط Pump.fun ومؤهلة)
+      const validResults = batchResults.filter(result => result !== null && !result.unqualified);
       results.push(...validResults);
       qualifiedResults += validResults.length;
 
       processed += batch.length;
 
+      // حساب عدد المحافظ المستبعدة بسبب عدم وجود نشاط Pump.fun
+      const pumpfunExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'no_pumpfun_activity').length;
+      const accountsExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'low_accounts').length;
+      
       // إرسال التحديث
-      const progressData = { progress: processed, total: walletOwners.length };
-      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults}`);
+      const progressData = { 
+        progress: processed, 
+        total: walletOwners.length,
+        qualified: qualifiedResults,
+        pumpfunExcluded: pumpfunExcluded,
+        accountsExcluded: accountsExcluded
+      };
+      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults} - مستبعد بسبب Pump.fun: ${pumpfunExcluded} - مستبعد بسبب الحسابات: ${accountsExcluded}`);
       res.write(`data: ${JSON.stringify(progressData)}\n\n`);
 
       // إرسال النتائج الجديدة إذا وجدت
