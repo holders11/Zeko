@@ -9,7 +9,7 @@ let fetch;
 })();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // واجهة واحدة فقط
 app.use(express.static(__dirname));
@@ -195,7 +195,7 @@ async function getTokenAccounts(owner, mint, maxRetries = 3) {
 }
 
 // احصل على سعر التوكن بالدولار
-async function getTokenPrice(mint, serverSource = 'both') {
+async function getTokenPrice(mint, serverSource = 'dexscreener') {
   try {
     if (serverSource === 'pumpfun') {
       // استخدم PumpFun فقط
@@ -597,10 +597,10 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
 
 // نقطة البدء
 app.post("/analyze", async (req, res) => {
-  const { mint, minAccounts = 0.05, serverSource = 'both' } = req.body;
+  const { mint, minAccounts = 0.05, balanceFilter = 'under10' } = req.body;
   console.log(`🚀 بدء تحليل التوكن: ${mint}`);
   console.log(`⚙️ إعدادات الفحص: الحد الأدنى ${minAccounts} حساب`);
-  console.log(`🌐 مصدر السعر: ${serverSource}`);
+  console.log(`⚖️ فلتر الرصيد: ${balanceFilter}`);
 
   try {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -609,7 +609,7 @@ app.post("/analyze", async (req, res) => {
 
     // الحصول على سعر التوكن أولاً
     console.log("💲 جلب سعر التوكن...");
-    const tokenPrice = await getTokenPrice(mint, serverSource);
+    const tokenPrice = await getTokenPrice(mint, 'dexscreener');
     console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
 
     const tokenPriceData = { tokenPrice: tokenPrice };
@@ -663,15 +663,16 @@ app.post("/analyze", async (req, res) => {
           try {
             console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
             
-            // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun
-            const hasPumpFun = await hasPumpFunActivity(owner, 2);
-            
-            if (!hasPumpFun) {
-              console.log(`❌ المحفظة ${owner} لا تحتوي على نشاط Pump.fun - تم تخطيها`);
-              return { unqualified: true, address: owner, reason: 'no_pumpfun_activity' };
+            // فحص الرصيد أولاً إذا كان الفلتر 'under10'
+            if (balanceFilter === 'under10') {
+              const solBalance = await getSolBalance(owner, 2);
+              if (solBalance > 10) {
+                console.log(`❌ المحفظة ${owner} رصيدها ${solBalance.toFixed(3)} SOL (أكثر من 10) - تم تخطيها`);
+                return { unqualified: true, address: owner, reason: 'high_balance' };
+              }
+              console.log(`✅ المحفظة ${owner} رصيدها ${solBalance.toFixed(3)} SOL (أقل من 10) - متابعة التحليل`);
             }
             
-            console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل`);
             const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts);
 
             if (data) {
@@ -701,15 +702,15 @@ app.post("/analyze", async (req, res) => {
       // انتظار انتهاء جميع محافظ المجموعة
       const batchResults = await Promise.all(batchPromises);
 
-      // إضافة النتائج الصالحة (فقط المحافظ التي لديها نشاط Pump.fun ومؤهلة)
+      // إضافة النتائج الصالحة (فقط المحافظ المؤهلة)
       const validResults = batchResults.filter(result => result !== null && !result.unqualified);
       results.push(...validResults);
       qualifiedResults += validResults.length;
 
       processed += batch.length;
 
-      // حساب عدد المحافظ المستبعدة بسبب عدم وجود نشاط Pump.fun
-      const pumpfunExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'no_pumpfun_activity').length;
+      // حساب عدد المحافظ المستبعدة
+      const balanceExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'high_balance').length;
       const accountsExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'low_accounts').length;
       
       // إرسال التحديث
@@ -717,10 +718,10 @@ app.post("/analyze", async (req, res) => {
         progress: processed, 
         total: walletOwners.length,
         qualified: qualifiedResults,
-        pumpfunExcluded: pumpfunExcluded,
+        balanceExcluded: balanceExcluded,
         accountsExcluded: accountsExcluded
       };
-      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults} - مستبعد بسبب Pump.fun: ${pumpfunExcluded} - مستبعد بسبب الحسابات: ${accountsExcluded}`);
+      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults} - مستبعد بسبب الرصيد: ${balanceExcluded} - مستبعد بسبب الحسابات: ${accountsExcluded}`);
       res.write(`data: ${JSON.stringify(progressData)}\n\n`);
 
       // إرسال النتائج الجديدة إذا وجدت
