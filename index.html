@@ -633,7 +633,6 @@
         الإجمالي: <span id="totalScanned" style="color: #333;">0</span> | 
         المؤهل: <span id="qualifiedCount" style="color: #4CAF50; font-weight: bold;">0</span> | 
 غير مؤهل: <span id="unqualifiedCount" style="color: #ff9800;">0</span> | 
-        قليل الحسابات: <span id="accountsCount" style="color: #607d8b;">0</span> | 
         فاشل: <span id="failedCount" style="color: #f44336;">0</span>
       </div>
     </div>
@@ -866,11 +865,11 @@
     function updateScanStats() {
       document.getElementById("totalScanned").textContent = totalScannedWallets;
       document.getElementById("qualifiedCount").textContent = qualifiedWallets;
-      document.getElementById("unqualifiedCount").textContent = unqualifiedWallets;
-      document.getElementById("accountsCount").textContent = accountsExcluded;
+      // دمج غير المؤهل مع قليل الحسابات
+      document.getElementById("unqualifiedCount").textContent = unqualifiedWallets + accountsExcluded;
       
-      // الفاشل = الإجمالي - المؤهل - غير المؤهل - المستبعد
-      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets - accountsExcluded;
+      // الفاشل = الإجمالي - المؤهل - غير المؤهل (المدمج)
+      failedWallets = totalScannedWallets - qualifiedWallets - (unqualifiedWallets + accountsExcluded);
       if (failedWallets < 0) failedWallets = 0; // تجنب القيم السالبة
       document.getElementById("failedCount").textContent = failedWallets;
     }

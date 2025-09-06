@@ -230,19 +230,32 @@ async function getTokenPrice(mint, serverSource = 'dexscreener') {
       return price;
     }
 
-    // إذا لم يجد في DexScreener، جرب PumpFun API
-    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة PumpFun...");
+    // إذا لم يجد في DexScreener، جرب Jupiter API ثم PumpFun
+    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة Jupiter API...");
+    const jupiterPrice = await getJupiterPrice(mint);
+    if (jupiterPrice > 0) {
+      return jupiterPrice;
+    }
+    
+    console.log("🔍 لم يتم العثور على السعر في Jupiter، محاولة PumpFun...");
     return await getPumpFunPrice(mint);
 
   } catch (error) {
     console.error("خطأ في الحصول على سعر التوكن:", error);
 
     if (serverSource === 'both') {
-      // محاولة PumpFun كبديل إذا كان الإعداد "كلاهما"
+      // محاولة Jupiter ثم PumpFun كبديل إذا كان الإعداد "كلاهما"
       try {
+        console.log("🔍 محاولة Jupiter API كبديل...");
+        const jupiterPrice = await getJupiterPrice(mint);
+        if (jupiterPrice > 0) {
+          return jupiterPrice;
+        }
+        
+        console.log("🔍 محاولة PumpFun API كبديل أخير...");
         return await getPumpFunPrice(mint);
-      } catch (pumpError) {
-        console.error("خطأ في الحصول على سعر التوكن من PumpFun:", pumpError);
+      } catch (backupError) {
+        console.error("خطأ في الحصول على سعر التوكن من المصادر الاحتياطية:", backupError);
         return 0;
       }
     }
@@ -286,6 +299,36 @@ async function getPumpFunPrice(mint) {
 
   } catch (error) {
     console.error("خطأ في الحصول على سعر التوكن من PumpFun:", error);
+    return 0;
+  }
+}
+
+// دالة للحصول على سعر التوكن من Jupiter API
+async function getJupiterPrice(mint) {
+  try {
+    console.log(`🪐 البحث عن سعر التوكن ${mint} في Jupiter...`);
+
+    const response = await fetch(`https://price.jup.ag/v6/price?ids=${mint}`, {
+      timeout: 10000 // timeout 10 ثوان
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data && data.data && data.data[mint] && data.data[mint].price) {
+      const price = parseFloat(data.data[mint].price);
+      console.log(`💰 سعر من Jupiter: $${price}`);
+      return price;
+    }
+
+    console.log("⚠️ لم يتم العثور على بيانات السعر في Jupiter");
+    return 0;
+
+  } catch (error) {
+    console.error("خطأ في الحصول على سعر التوكن من Jupiter:", error);
     return 0;
   }
 }
