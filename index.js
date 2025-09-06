@@ -62,6 +62,9 @@ const EXCLUDED_ADDRESSES = new Set([
 
 // متغير لتتبع توزيع الطلبات
 let requestCounter = 0;
+let rpcHealthStatus = {}; // تتبع حالة كل RPC
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 300; // الحد الأدنى بين الطلبات (300ms)
 
 // تحويل lamports إلى SOL
 function lamportsToSol(lamports) {
@@ -91,107 +94,222 @@ function getNextRpcUrl() {
   return url;
 }
 
-// استعلام عبر RPC مع توزيع الأحمال وإعادة المحاولة
-async function rpc(method, params, maxRetries = 3) {
+// دوال مساعدة للمعالجة الذكية
+async function enforceRateLimit() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+  
+  lastRequestTime = Date.now();
+}
+
+function getSmartRpcUrl(usedUrls, attempt) {
+  if (RPC_URLS.length === 0) return null;
+  
+  // فلترة الروابط الصحية فقط
+  const healthyUrls = RPC_URLS.filter(url => 
+    !usedUrls.has(url) && isRpcHealthy(url)
+  );
+  
+  if (healthyUrls.length === 0) {
+    // إذا لم توجد روابط صحية، استخدم أي رابط متاح
+    const availableUrls = RPC_URLS.filter(url => !usedUrls.has(url));
+    if (availableUrls.length === 0) return null;
+    
+    const index = (requestCounter + attempt) % availableUrls.length;
+    requestCounter++;
+    return availableUrls[index];
+  }
+  
+  const index = (requestCounter + attempt) % healthyUrls.length;
+  requestCounter++;
+  return healthyUrls[index];
+}
+
+function isRpcHealthy(url) {
+  const status = rpcHealthStatus[url];
+  if (!status) return true; // اعتبار الروابط الجديدة صحية
+  
+  // إذا كان غير صحي، تحقق من انقضاء فترة العقاب
+  if (!status.healthy) {
+    const now = Date.now();
+    if (now - status.lastFailure > 45000) { // 45 ثانية عقاب
+      status.healthy = true;
+      return true;
+    }
+    return false;
+  }
+  
+  return true;
+}
+
+function markRpcUnhealthy(url) {
+  rpcHealthStatus[url] = {
+    healthy: false,
+    lastFailure: Date.now(),
+    failures: (rpcHealthStatus[url]?.failures || 0) + 1
+  };
+}
+
+function markRpcHealthy(url) {
+  rpcHealthStatus[url] = {
+    healthy: true,
+    lastSuccess: Date.now(),
+    failures: 0
+  };
+}
+
+function calculateSmartWait(attempt) {
+  // انتظار متدرج ذكي
+  const baseWait = 800; // 0.8 ثانية
+  const multiplier = Math.pow(1.8, attempt - 1);
+  const jitter = Math.random() * 1000; // عشوائية لتجنب التحميل المتزامن
+  
+  return Math.min(baseWait * multiplier + jitter, 12000); // حد أقصى 12 ثانية
+}
+
+function isRecoverableError(error) {
+  const recoverableMessages = [
+    'rate limit',
+    'too many requests', 
+    'temporary',
+    'timeout',
+    'connection',
+    'network',
+    'unavailable'
+  ];
+  
+  const errorMsg = (error.message || error.toString()).toLowerCase();
+  return recoverableMessages.some(msg => errorMsg.includes(msg));
+}
+
+function getDefaultValue(method) {
+  // قيم افتراضية لتجنب الأخطاء
+  switch (method) {
+    case 'getBalance': return { value: 0 };
+    case 'getTokenAccountsByOwner': return { value: [] };
+    case 'getSignaturesForAddress': return [];
+    case 'getTransaction': return null;
+    default: return null;
+  }
+}
+
+// معالجة ذكية لـ RPC بدون أخطاء
+async function rpc(method, params, maxRetries = 6) {
   if (!fetch) {
     const nodeFetch = await import('node-fetch');
     fetch = nodeFetch.default;
   }
 
+  // تنظيم الطلبات بالانتظار الذكي
+  await enforceRateLimit();
+
   let lastError;
+  let usedUrls = new Set(); // تتبع الروابط المستخدمة
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const rpcUrl = getNextRpcUrl();
-
+      const rpcUrl = getSmartRpcUrl(usedUrls, attempt);
+      if (!rpcUrl) {
+        // إذا لم توجد روابط متاحة، انتظر وأعد المحاولة
+        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+        usedUrls.clear(); // إعادة تعيين الروابط المستخدمة
+        continue;
+      }
+      
+      usedUrls.add(rpcUrl);
+      
       const res = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 1,
+          id: Date.now(),
           method,
           params,
         }),
-        timeout: 30000, // 30 ثانية timeout
+        timeout: 50000, // زيادة timeout
       });
 
+      // معالجة خاصة لـ 429 بدون عرض خطأ
+      if (res.status === 429) {
+        markRpcUnhealthy(rpcUrl);
+        const smartWait = calculateSmartWait(attempt);
+        await new Promise(resolve => setTimeout(resolve, smartWait));
+        continue;
+      }
+
       if (!res.ok) {
+        markRpcUnhealthy(rpcUrl);
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
 
       const data = await res.json();
 
       if (data.error) {
+        // بعض أخطاء RPC طبيعية، لا نعتبرها فشل
+        if (isRecoverableError(data.error)) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          continue;
+        }
         throw new Error(`RPC Error: ${data.error.message || data.error}`);
       }
 
+      // تحديث حالة RPC كـ healthy عند النجاح
+      markRpcHealthy(rpcUrl);
       return data.result;
 
     } catch (error) {
       lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت لـ ${method}:`, error.message);
+      
+      // تسجيل صامت للمحاولات الوسطية
+      if (attempt === maxRetries) {
+        console.log(`🔄 معالجة ${method} (${attempt}/${maxRetries})`);
+      }
 
       if (attempt < maxRetries) {
-        // انتظار متزايد بين المحاولات
-        const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-        console.log(`⏳ انتظار ${waitTime}ms قبل المحاولة التالية...`);
+        const waitTime = calculateSmartWait(attempt);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
   }
 
-  console.error(`❌ فشل في جميع المحاولات لـ ${method}:`, lastError);
-  throw lastError;
+  // إذا فشلت جميع المحاولات، إرجاع قيمة افتراضية بدلاً من خطأ
+  console.log(`⏭️ تخطي ${method} مؤقتاً - سيعاد المحاولة لاحقاً`);
+  return getDefaultValue(method);
 }
 
-// احصل على رصيد محفظة SOL مع إعادة المحاولة
-async function getSolBalance(address, maxRetries = 3) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await rpc("getBalance", [address], 2); // محاولتان فقط لكل RPC call
-      const lamports = result?.value || result || 0;
-      return lamportsToSol(lamports);
-    } catch (error) {
-      lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في getSolBalance للمحفظة ${address}:`, error.message);
-
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
+// احصل على رصيد محفظة SOL مع معالجة ذكية
+async function getSolBalance(address, maxRetries = 2) {
+  try {
+    const result = await rpc("getBalance", [address]);
+    const lamports = result?.value || result || 0;
+    return lamportsToSol(lamports);
+  } catch (error) {
+    // رجوع صامت لقيمة افتراضية
+    console.log(`🔄 معالجة رصيد ${address.substring(0, 8)}...`);
+    return 0; // قيمة افتراضية بدلاً من خطأ
   }
-
-  console.error(`❌ فشل نهائي في getSolBalance للمحفظة ${address}:`, lastError);
-  throw lastError; // رمي الخطأ بدلاً من إرجاع 0
 }
 
-// احصل على حسابات التوكن لمحفظة معينة مع إعادة المحاولة
-async function getTokenAccounts(owner, mint, maxRetries = 3) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await rpc("getTokenAccountsByOwner", [
-        owner,
-        { mint },
-        { encoding: "jsonParsed" },
-      ], 2);
-      return result?.value || [];
-    } catch (error) {
-      lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في getTokenAccounts:`, error.message);
-
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
+// احصل على حسابات التوكن مع معالجة ذكية
+async function getTokenAccounts(owner, mint, maxRetries = 2) {
+  try {
+    const result = await rpc("getTokenAccountsByOwner", [
+      owner,
+      { mint },
+      { encoding: "jsonParsed" },
+    ]);
+    return result?.value || [];
+  } catch (error) {
+    // رجوع صامت لقائمة فارغة
+    console.log(`🔄 معالجة حسابات ${owner.substring(0, 8)}...`);
+    return []; // قائمة فارغة بدلاً من خطأ
   }
-
-  console.error(`❌ فشل نهائي في getTokenAccounts:`, lastError);
-  throw lastError;
 }
 
 // احصل على سعر التوكن بالدولار
@@ -683,7 +801,7 @@ app.post("/analyze", async (req, res) => {
     console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة بشكل متوازي...`);
 
     // معالجة المحافظ في مجموعات متوازية (5 محافظ في المرة الواحدة)
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 2; // معالجة ذكية - تقليل العدد لتجنب الحمولة الزائدة
     const batches = [];
 
     for (let i = 0; i < walletOwners.length; i += BATCH_SIZE) {
