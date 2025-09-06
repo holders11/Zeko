@@ -110,7 +110,7 @@
       box-shadow: 0 8px 25px rgba(0,0,0,0.3);
     }
 
-    body.dark-mode #balancePanel {
+    body.dark-mode #serverPanel {
       background: linear-gradient(145deg, #1e3a52 0%, #2d4a63 100%) !important;
       border: 1px solid rgba(59, 130, 246, 0.2) !important;
       color: #e8eaed;
@@ -424,7 +424,7 @@
     }
 
     /* تصميم أيقونات الإعدادات والخادم */
-    #settingsButton, #balanceButton {
+    #settingsButton, #serverButton {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
       border: none;
       border-radius: 8px;
@@ -436,7 +436,7 @@
       min-width: 40px;
     }
 
-    #balanceButton {
+    #serverButton {
       background: linear-gradient(135deg, #28a745 0%, #20c997 100%) !important;
       box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
     }
@@ -476,7 +476,7 @@
       box-shadow: none;
     }
 
-    #settingsButton:before, #balanceButton:before {
+    #settingsButton:before, #serverButton:before {
       content: '';
       position: absolute;
       top: 0;
@@ -493,13 +493,13 @@
       box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
     }
 
-    #balanceButton:hover {
+    #serverButton:hover {
       background: linear-gradient(135deg, #218838 0%, #1e9ba4 100%) !important;
       transform: translateY(-2px) scale(1.05);
       box-shadow: 0 4px 12px rgba(40, 167, 69, 0.5);
     }
 
-    #settingsButton:hover:before, #balanceButton:hover:before {
+    #settingsButton:hover:before, #serverButton:hover:before {
       left: 100%;
     }
 
@@ -507,7 +507,7 @@
       transform: rotate(180deg);
     }
 
-    #balanceButton:hover .balance-icon {
+    #serverButton:hover .server-icon {
       transform: scale(1.2);
     }
 
@@ -515,7 +515,7 @@
       transform: none;
     }
 
-    .settings-icon, .balance-icon {
+    .settings-icon, .server-icon {
       transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
       display: inline-block;
       font-size: 14px;
@@ -566,8 +566,8 @@
       <button id="settingsButton" onclick="toggleSettings()">
         <span class="settings-icon">⚙️</span>
       </button>
-      <button id="balanceButton" onclick="toggleBalanceSettings()">
-        <span class="balance-icon">⚖️</span>
+      <button id="serverButton" onclick="toggleServerSettings()">
+        <span class="server-icon">🌐</span>
       </button>
     </div>
 
@@ -600,26 +600,27 @@
       </div>
     </div>
 
-    <!-- نافذة اختيار الرصيد -->
-    <div id="balancePanel" style="display: none; background: #f0f8ff; border: 1px solid #b8daff; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+    <!-- نافذة إعدادات الخادم -->
+    <div id="serverPanel" style="display: none; background: #f0f8ff; border: 1px solid #b8daff; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
       <h4 style="margin: 0 0 12px 0; color: #004085; text-align: center; font-size: 16px; font-weight: 600;">
-        ⚖️ اختيار الرصيد
+        🌐 إعدادات الخادم
       </h4>
 
       <div style="margin-bottom: 15px;">
         <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #004085; font-size: 14px;">
-          فلتر المحافظ:
+          مصدر السعر:
         </label>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 10px;">
-          <button onclick="setBalanceFilter('under10')" class="preset-btn-small balance-btn" data-balance="under10">أقل من 10 SOL (افتراضي)</button>
-          <button onclick="setBalanceFilter('all')" class="preset-btn-small balance-btn" data-balance="all">كامل المحافظ</button>
+          <button onclick="setServerSource('both')" class="preset-btn-small server-btn" data-source="both">كلاهما</button>
+          <button onclick="setServerSource('dexscreener')" class="preset-btn-small server-btn" data-source="dexscreener">DexScreener فقط</button>
+          <button onclick="setServerSource('pumpfun')" class="preset-btn-small server-btn" data-source="pumpfun">PumpFun فقط (افتراضي)</button>
         </div>
       </div>
 
       <div style="text-align: center; padding: 10px; background: #d1ecf1; border-radius: 8px; border: 1px solid #bee5eb;">
-        <div style="font-size: 13px; color: #0c5460; margin-bottom: 4px;">الفلتر الحالي</div>
+        <div style="font-size: 13px; color: #0c5460; margin-bottom: 4px;">الخادم الحالي</div>
         <div style="font-size: 14px; color: #0c5460; font-weight: 600;">
-          <span id="currentBalanceFilter">أقل من 10 SOL</span>
+          <span id="currentServerSource">PumpFun فقط</span>
         </div>
       </div>
     </div>
@@ -633,6 +634,7 @@
         الإجمالي: <span id="totalScanned" style="color: #333;">0</span> | 
         المؤهل: <span id="qualifiedCount" style="color: #4CAF50; font-weight: bold;">0</span> | 
 غير مؤهل: <span id="unqualifiedCount" style="color: #ff9800;">0</span> | 
+        مستبعد Pump.fun: <span id="pumpfunCount" style="color: #9c27b0;">0</span> | 
         قليل الحسابات: <span id="accountsCount" style="color: #607d8b;">0</span> | 
         فاشل: <span id="failedCount" style="color: #f44336;">0</span>
       </div>
@@ -684,11 +686,12 @@
     let qualifiedWallets = 0;
     let unqualifiedWallets = 0;
     let failedWallets = 0;
+    let pumpfunExcluded = 0;
     let accountsExcluded = 0;
 
     // إعدادات الفحص
     let minAccountsThreshold = 0.05; // الحد الأدنى للحاملين 0.05 SOL rent
-    let balanceFilter = 'under10'; // under10, all
+    let serverSource = 'both'; // both, dexscreener, pumpfun
     let isDarkMode = true; // الوضع الليلي افتراضي
 
     function toggleScan() {
@@ -721,6 +724,7 @@
       qualifiedWallets = 0;
       unqualifiedWallets = 0;
       failedWallets = 0;
+      pumpfunExcluded = 0;
       accountsExcluded = 0;
 
       document.querySelector("#results").style.display = "none";
@@ -736,7 +740,7 @@
         body: JSON.stringify({ 
           mint: mint,
           minAccounts: minAccountsThreshold,
-          balanceFilter: balanceFilter
+          serverSource: serverSource
         }),
       });
 
@@ -785,6 +789,7 @@
             totalScannedWallets = data.progress;
             
             // تحديث الإحصائيات من البيانات الواردة
+            if (data.pumpfunExcluded !== undefined) pumpfunExcluded += data.pumpfunExcluded;
             if (data.accountsExcluded !== undefined) accountsExcluded += data.accountsExcluded;
             
             updateScanStats();
@@ -867,10 +872,11 @@
       document.getElementById("totalScanned").textContent = totalScannedWallets;
       document.getElementById("qualifiedCount").textContent = qualifiedWallets;
       document.getElementById("unqualifiedCount").textContent = unqualifiedWallets;
+      document.getElementById("pumpfunCount").textContent = pumpfunExcluded;
       document.getElementById("accountsCount").textContent = accountsExcluded;
       
       // الفاشل = الإجمالي - المؤهل - غير المؤهل - المستبعد
-      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets - accountsExcluded;
+      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets - pumpfunExcluded - accountsExcluded;
       if (failedWallets < 0) failedWallets = 0; // تجنب القيم السالبة
       document.getElementById("failedCount").textContent = failedWallets;
     }
@@ -980,12 +986,12 @@
     function toggleSettings() {
       const panel = document.getElementById('settingsPanel');
       panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-      // إغلاق نافذة الرصيد إذا كانت مفتوحة
-      document.getElementById('balancePanel').style.display = 'none';
+      // إغلاق نافذة الخادم إذا كانت مفتوحة
+      document.getElementById('serverPanel').style.display = 'none';
     }
 
-    function toggleBalanceSettings() {
-      const panel = document.getElementById('balancePanel');
+    function toggleServerSettings() {
+      const panel = document.getElementById('serverPanel');
       panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
       // إغلاق نافذة الإعدادات إذا كانت مفتوحة
       document.getElementById('settingsPanel').style.display = 'none';
@@ -1009,23 +1015,24 @@
       }
     }
 
-    function setBalanceFilter(filter) {
-      balanceFilter = filter;
-      updateBalanceDisplay();
-      updateBalanceButtons();
-      toggleBalanceSettings(); // إغلاق نافذة إعدادات الرصيد
+    function setServerSource(source) {
+      serverSource = source;
+      updateServerDisplay();
+      updateServerButtons();
+      toggleServerSettings(); // إغلاق نافذة إعدادات الخادم
     }
 
     function updateSettingsDisplay() {
       document.getElementById('currentMinAccounts').textContent = minAccountsThreshold;
     }
 
-    function updateBalanceDisplay() {
-      const filterText = {
-        'under10': 'أقل من 10 SOL',
-        'all': 'كامل المحافظ'
+    function updateServerDisplay() {
+      const sourceText = {
+        'both': 'كلاهما (DexScreener → PumpFun)',
+        'dexscreener': 'DexScreener فقط',
+        'pumpfun': 'PumpFun فقط'
       };
-      document.getElementById('currentBalanceFilter').textContent = filterText[balanceFilter];
+      document.getElementById('currentServerSource').textContent = sourceText[serverSource];
     }
 
     function toggleDarkMode() {
@@ -1066,10 +1073,10 @@
       });
     }
 
-    function updateBalanceButtons() {
-      // تحديث أزرار الرصيد
-      document.querySelectorAll('.balance-btn[data-balance]').forEach(btn => {
-        if (btn.dataset.balance === balanceFilter) {
+    function updateServerButtons() {
+      // تحديث أزرار الخادم
+      document.querySelectorAll('.server-btn[data-source]').forEach(btn => {
+        if (btn.dataset.source === serverSource) {
           btn.classList.add('active');
         } else {
           btn.classList.remove('active');
@@ -1082,8 +1089,8 @@
       initializeTheme(); // تهيئة الوضع الليلي أولاً
       updateSettingsDisplay();
       updateActiveButtons();
-      updateBalanceDisplay();
-      updateBalanceButtons();
+      updateServerDisplay();
+      updateServerButtons();
     });
 
     // دالة الترتيب
