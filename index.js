@@ -55,8 +55,6 @@ const EXCLUDED_ADDRESSES = new Set([
   "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
   "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So", // Marinade staked SOL
   "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj", // Lido staked SOL
-  "DdZR6zRFiUt4S5mg7AV1uKB2z1f1WzcNYCaTEEWPAuby", // Jupiter Aggregator V6
-  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", // Jupiter Token
   "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", // Pump.fun Program
 ]);
 
@@ -312,7 +310,6 @@ async function getTokenAccounts(owner, mint, maxRetries = 2) {
   }
 }
 
-
 // احصل على سعر التوكن بالدولار من CoinGecko فقط
 async function getTokenPrice(mint) {
   try {
@@ -335,10 +332,8 @@ async function getTokenPrice(mint) {
   }
 }
 
-    if (serverSource === 'dexscreener') {
       // استخدم DexScreener فقط
       console.log("📊 استخدام DexScreener فقط...");
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
       const data = await response.json();
 
       if (data.pairs && data.pairs.length > 0) {
@@ -353,7 +348,6 @@ async function getTokenPrice(mint) {
 
     // الافتراضي: استخدم كلاهما (DexScreener أولاً ثم PumpFun)
     console.log("🔄 استخدام كلا الخادمين...");
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
     const data = await response.json();
 
     if (data.pairs && data.pairs.length > 0) {
@@ -362,26 +356,15 @@ async function getTokenPrice(mint) {
       return price;
     }
 
-    // إذا لم يجد في DexScreener، جرب Jupiter API ثم PumpFun
-    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة Jupiter API...");
-    const jupiterPrice = await getJupiterPrice(mint);
-    if (jupiterPrice > 0) {
-      return jupiterPrice;
     }
     
-    console.log("🔍 لم يتم العثور على السعر في Jupiter، محاولة PumpFun...");
     return await getPumpFunPrice(mint);
 
   } catch (error) {
     console.error("خطأ في الحصول على سعر التوكن:", error);
 
     if (serverSource === 'both') {
-      // محاولة Jupiter ثم PumpFun كبديل إذا كان الإعداد "كلاهما"
       try {
-        console.log("🔍 محاولة Jupiter API كبديل...");
-        const jupiterPrice = await getJupiterPrice(mint);
-        if (jupiterPrice > 0) {
-          return jupiterPrice;
         }
         
         console.log("🔍 محاولة PumpFun API كبديل أخير...");
@@ -429,15 +412,12 @@ async function getTokenPrice(mint) {
 
     if (data && data.data && data.data[mint] && data.data[mint].price) {
       const price = parseFloat(data.data[mint].price);
-      console.log(`💰 سعر من Jupiter: $${price}`);
       return price;
     }
 
-    console.log("⚠️ لم يتم العثور على بيانات السعر في Jupiter");
     return 0;
 
   } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن من Jupiter:", error);
     return 0;
   }
 }
@@ -761,7 +741,6 @@ app.post("/analyze", async (req, res) => {
 
     // الحصول على سعر التوكن أولاً
     console.log("💲 جلب سعر التوكن...");
-    const tokenPrice = await getTokenPrice(mint, 'dexscreener');
     console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
 
     const tokenPriceData = { tokenPrice: tokenPrice };
