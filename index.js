@@ -11,7 +11,6 @@ let fetch;
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// واجهة واحدة فقط
 app.use(express.static(__dirname));
 app.use(express.json());
 
@@ -41,7 +40,7 @@ if (RPC_URLS.length === 0) {
 
 const RENT_EXEMPT_LAMPORTS = 2039280;
 
-// قائمة عناوين المنصات والحسابات المُستبعدة
+// قائمة العناوين المستبعدة
 const EXCLUDED_ADDRESSES = new Set([
   "8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf",
   "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC",
@@ -65,7 +64,7 @@ function lamportsToSol(lamports) {
   return lamports / 1e9;
 }
 
-// --- نظام الـ RPC الذكي (نفس كودك السابق، ما غيرته) ---
+// --- نظام الـ RPC ---
 let requestCounter = 0;
 let rpcHealthStatus = {};
 let lastRequestTime = 0;
@@ -79,20 +78,6 @@ async function enforceRateLimit() {
     await new Promise(resolve => setTimeout(resolve, waitTime));
   }
   lastRequestTime = Date.now();
-}
-
-function isRpcHealthy(url) {
-  const status = rpcHealthStatus[url];
-  if (!status) return true;
-  if (!status.healthy) {
-    const now = Date.now();
-    if (now - status.lastFailure > 45000) {
-      status.healthy = true;
-      return true;
-    }
-    return false;
-  }
-  return true;
 }
 
 function markRpcUnhealthy(url) {
@@ -126,13 +111,10 @@ async function rpc(method, params, maxRetries = 6) {
   await enforceRateLimit();
 
   let lastError;
-  let usedUrls = new Set();
-
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const rpcUrl = RPC_URLS[requestCounter % RPC_URLS.length];
       requestCounter++;
-      usedUrls.add(rpcUrl);
 
       const res = await fetch(rpcUrl, {
         method: "POST",
@@ -192,10 +174,20 @@ async function getTokenAccounts(owner, mint) {
   }
 }
 
-// ✅ هنا التعديل الأساسي: CoinGecko فقط
+// ✅ CoinGecko + كاش 30 ثانية
+let cachedPrice = null;
+let cachedAt = 0;
+const CACHE_TTL = 30 * 1000; // 30 ثانية
+
 async function getTokenPrice(mint) {
+  const now = Date.now();
+  if (cachedPrice !== null && now - cachedAt < CACHE_TTL) {
+    console.log("💾 إرجاع السعر من الكاش");
+    return cachedPrice;
+  }
+
   try {
-    console.log("📊 جلب السعر من CoinGecko فقط...");
+    console.log("📊 جلب السعر من CoinGecko...");
     const url = `https://api.coingecko.com/api/v3/simple/token_price/solana?contract_addresses=${mint}&vs_currencies=usd`;
     const response = await fetch(url);
 
@@ -206,6 +198,9 @@ async function getTokenPrice(mint) {
     const data = await response.json();
     const price = data[mint]?.usd || 0;
 
+    cachedPrice = price;
+    cachedAt = Date.now();
+
     console.log(`💰 سعر من CoinGecko: $${price}`);
     return price;
   } catch (error) {
@@ -214,8 +209,8 @@ async function getTokenPrice(mint) {
   }
 }
 
-// --- تحليل الحامليـن ---
-async function getHolders(mint) {
+// --- تحليل الحامليـن (يستعمل السعر الممرر) ---
+async function getHolders(mint, tokenPrice) {
   console.log(`🔍 بدء البحث عن حاملي التوكن: ${mint}`);
   const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
@@ -233,7 +228,6 @@ async function getHolders(mint) {
 
     if (!accounts || !Array.isArray(accounts)) return [];
 
-    const tokenPrice = await getTokenPrice(mint);
     const ownersWithBalance = new Map();
 
     for (let acc of accounts) {
@@ -270,7 +264,7 @@ app.post("/analyze", async (req, res) => {
     const tokenPrice = await getTokenPrice(mint);
     res.write(`data: ${JSON.stringify({ tokenPrice })}\n\n`);
 
-    const walletOwners = await getHolders(mint);
+    const walletOwners = await getHolders(mint, tokenPrice);
     res.write(`data: ${JSON.stringify({ totalHolders: walletOwners.length })}\n\n`);
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
