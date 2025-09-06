@@ -312,14 +312,28 @@ async function getTokenAccounts(owner, mint, maxRetries = 2) {
   }
 }
 
-// احصل على سعر التوكن بالدولار
-async function getTokenPrice(mint, serverSource = 'dexscreener') {
+
+// احصل على سعر التوكن بالدولار من CoinGecko فقط
+async function getTokenPrice(mint) {
   try {
-    if (serverSource === 'pumpfun') {
-      // استخدم PumpFun فقط
-      console.log("🚀 استخدام PumpFun فقط...");
-      return await getPumpFunPrice(mint);
+    console.log("📊 جلب السعر من CoinGecko فقط...");
+    const url = `https://api.coingecko.com/api/v3/simple/token_price/solana?contract_addresses=${mint}&vs_currencies=usd`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+
+    const data = await response.json();
+    const price = data[mint]?.usd || 0;
+
+    console.log(`💰 سعر من CoinGecko: $${price}`);
+    return price;
+  } catch (error) {
+    console.error("❌ خطأ في الحصول على سعر التوكن من CoinGecko:", error);
+    return 0;
+  }
+}
 
     if (serverSource === 'dexscreener') {
       // استخدم DexScreener فقط
@@ -382,17 +396,6 @@ async function getTokenPrice(mint, serverSource = 'dexscreener') {
   }
 }
 
-// احصل على سعر التوكن من PumpFun
-async function getPumpFunPrice(mint) {
-  try {
-    console.log(`🚀 البحث عن سعر التوكن ${mint} في PumpFun...`);
-
-    // استخدام REST API بدلاً من WebSocket للبساطة
-    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
 
     const data = await response.json();
 
@@ -421,18 +424,6 @@ async function getPumpFunPrice(mint) {
   }
 }
 
-// دالة للحصول على سعر التوكن من Jupiter API
-async function getJupiterPrice(mint) {
-  try {
-    console.log(`🪐 البحث عن سعر التوكن ${mint} في Jupiter...`);
-
-    const response = await fetch(`https://price.jup.ag/v6/price?ids=${mint}`, {
-      timeout: 10000 // timeout 10 ثوان
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
 
     const data = await response.json();
 
