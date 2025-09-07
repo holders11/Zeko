@@ -312,72 +312,134 @@ async function getTokenAccounts(owner, mint, maxRetries = 2) {
   }
 }
 
-// احصل على سعر التوكن بالدولار
-async function getTokenPrice(mint, serverSource = 'dexscreener') {
+// احصل على سعر التوكن بالدولار مع نظام retry متقدم
+async function getTokenPrice(mint, maxRetries = 3, retryDelay = 1000) {
+  console.log(`🔍 بدء البحث عن سعر التوكن ${mint} مع ${maxRetries} محاولات...`);
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    console.log(`📡 المحاولة ${attempt}/${maxRetries}...`);
+    
+    // جرب DexScreener أولاً (الأسرع والأكثر شمولية)
+    const dexPrice = await tryDexScreenerPrice(mint, attempt);
+    if (dexPrice > 0) return dexPrice;
+    
+    // جرب Jupiter API كبديل
+    const jupiterPrice = await tryJupiterPrice(mint, attempt);
+    if (jupiterPrice > 0) return jupiterPrice;
+    
+    // جرب PumpFun API للتوكنات الجديدة
+    const pumpPrice = await tryPumpFunPrice(mint, attempt);
+    if (pumpPrice > 0) return pumpPrice;
+    
+    // إذا فشلت كل المحاولات في هذه الجولة
+    if (attempt < maxRetries) {
+      console.log(`⏳ انتظار ${retryDelay}ms قبل المحاولة التالية...`);
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+    }
+  }
+  
+  console.log(`❌ فشل في الحصول على سعر التوكن بعد ${maxRetries} محاولات`);
+  return 0;
+}
+
+// محاولة جلب السعر من DexScreener
+async function tryDexScreenerPrice(mint, attempt = 1) {
   try {
-    if (serverSource === 'pumpfun') {
-      // استخدم PumpFun فقط
-      console.log("🚀 استخدام PumpFun فقط...");
-      return await getPumpFunPrice(mint);
-    }
-
-    if (serverSource === 'dexscreener') {
-      // استخدم DexScreener فقط
-      console.log("📊 استخدام DexScreener فقط...");
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-      const data = await response.json();
-
-      if (data.pairs && data.pairs.length > 0) {
-        const price = parseFloat(data.pairs[0].priceUsd) || 0;
-        console.log(`💰 سعر من DexScreener: $${price}`);
-        return price;
-      } else {
-        console.log("❌ لم يتم العثور على السعر في DexScreener");
-        return 0;
-      }
-    }
-
-    // الافتراضي: استخدم كلاهما (DexScreener أولاً ثم PumpFun)
-    console.log("🔄 استخدام كلا الخادمين...");
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-    const data = await response.json();
-
-    if (data.pairs && data.pairs.length > 0) {
-      const price = parseFloat(data.pairs[0].priceUsd) || 0;
-      console.log(`💰 سعر من DexScreener: $${price}`);
-      return price;
-    }
-
-    // إذا لم يجد في DexScreener، جرب Jupiter API ثم PumpFun
-    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة Jupiter API...");
-    const jupiterPrice = await getJupiterPrice(mint);
-    if (jupiterPrice > 0) {
-      return jupiterPrice;
+    console.log(`📊 [${attempt}] محاولة DexScreener...`);
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+      timeout: 8000
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ [${attempt}] DexScreener HTTP ${response.status}`);
+      return 0;
     }
     
-    console.log("🔍 لم يتم العثور على السعر في Jupiter، محاولة PumpFun...");
-    return await getPumpFunPrice(mint);
-
-  } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن:", error);
-
-    if (serverSource === 'both') {
-      // محاولة Jupiter ثم PumpFun كبديل إذا كان الإعداد "كلاهما"
-      try {
-        console.log("🔍 محاولة Jupiter API كبديل...");
-        const jupiterPrice = await getJupiterPrice(mint);
-        if (jupiterPrice > 0) {
-          return jupiterPrice;
-        }
-        
-        console.log("🔍 محاولة PumpFun API كبديل أخير...");
-        return await getPumpFunPrice(mint);
-      } catch (backupError) {
-        console.error("خطأ في الحصول على سعر التوكن من المصادر الاحتياطية:", backupError);
-        return 0;
+    const data = await response.json();
+    if (data.pairs && data.pairs.length > 0) {
+      const price = parseFloat(data.pairs[0].priceUsd) || 0;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من DexScreener: $${price}`);
+        return price;
       }
     }
+    
+    console.log(`❌ [${attempt}] لا توجد بيانات أسعار في DexScreener`);
+    return 0;
+  } catch (error) {
+    console.log(`❌ [${attempt}] خطأ DexScreener: ${error.message}`);
+    return 0;
+  }
+}
 
+// محاولة جلب السعر من Jupiter API
+async function tryJupiterPrice(mint, attempt = 1) {
+  try {
+    console.log(`🪐 [${attempt}] محاولة Jupiter API...`);
+    const response = await fetch(`https://price.jup.ag/v6/price?ids=${mint}`, {
+      timeout: 8000
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ [${attempt}] Jupiter HTTP ${response.status}`);
+      return 0;
+    }
+    
+    const data = await response.json();
+    if (data.data && data.data[mint] && data.data[mint].price) {
+      const price = parseFloat(data.data[mint].price) || 0;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من Jupiter: $${price}`);
+        return price;
+      }
+    }
+    
+    console.log(`❌ [${attempt}] لا توجد بيانات أسعار في Jupiter`);
+    return 0;
+  } catch (error) {
+    console.log(`❌ [${attempt}] خطأ Jupiter: ${error.message}`);
+    return 0;
+  }
+}
+
+// محاولة جلب السعر من PumpFun API
+async function tryPumpFunPrice(mint, attempt = 1) {
+  try {
+    console.log(`🚀 [${attempt}] محاولة PumpFun API...`);
+    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
+      timeout: 8000
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ [${attempt}] PumpFun HTTP ${response.status}`);
+      return 0;
+    }
+    
+    const data = await response.json();
+    
+    // طريقة 1: من market cap و total supply
+    if (data && data.usd_market_cap && data.total_supply) {
+      const price = data.usd_market_cap / data.total_supply;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من PumpFun (market cap): $${price}`);
+        return price;
+      }
+    }
+    
+    // طريقة 2: من virtual reserves
+    if (data && data.virtual_sol_reserves && data.virtual_token_reserves) {
+      const SOL_PRICE = 150; // تقديري
+      const price = (data.virtual_sol_reserves * SOL_PRICE) / data.virtual_token_reserves;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من PumpFun (reserves): $${price}`);
+        return price;
+      }
+    }
+    
+    console.log(`❌ [${attempt}] لا توجد بيانات أسعار في PumpFun`);
+    return 0;
+  } catch (error) {
+    console.log(`❌ [${attempt}] خطأ PumpFun: ${error.message}`);
     return 0;
   }
 }
