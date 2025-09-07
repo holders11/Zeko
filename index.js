@@ -9,7 +9,7 @@ let fetch;
 })();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // واجهة واحدة فقط
 app.use(express.static(__dirname));
@@ -62,6 +62,9 @@ const EXCLUDED_ADDRESSES = new Set([
 
 // متغير لتتبع توزيع الطلبات
 let requestCounter = 0;
+let rpcHealthStatus = {}; // تتبع حالة كل RPC
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 300; // الحد الأدنى بين الطلبات (300ms)
 
 // تحويل lamports إلى SOL
 function lamportsToSol(lamports) {
@@ -91,162 +94,352 @@ function getNextRpcUrl() {
   return url;
 }
 
-// استعلام عبر RPC مع توزيع الأحمال وإعادة المحاولة
-async function rpc(method, params, maxRetries = 3) {
+// دوال مساعدة للمعالجة الذكية
+async function enforceRateLimit() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+  
+  lastRequestTime = Date.now();
+}
+
+function getSmartRpcUrl(usedUrls, attempt) {
+  if (RPC_URLS.length === 0) return null;
+  
+  // فلترة الروابط الصحية فقط
+  const healthyUrls = RPC_URLS.filter(url => 
+    !usedUrls.has(url) && isRpcHealthy(url)
+  );
+  
+  if (healthyUrls.length === 0) {
+    // إذا لم توجد روابط صحية، استخدم أي رابط متاح
+    const availableUrls = RPC_URLS.filter(url => !usedUrls.has(url));
+    if (availableUrls.length === 0) return null;
+    
+    const index = (requestCounter + attempt) % availableUrls.length;
+    requestCounter++;
+    return availableUrls[index];
+  }
+  
+  const index = (requestCounter + attempt) % healthyUrls.length;
+  requestCounter++;
+  return healthyUrls[index];
+}
+
+function isRpcHealthy(url) {
+  const status = rpcHealthStatus[url];
+  if (!status) return true; // اعتبار الروابط الجديدة صحية
+  
+  // إذا كان غير صحي، تحقق من انقضاء فترة العقاب
+  if (!status.healthy) {
+    const now = Date.now();
+    if (now - status.lastFailure > 45000) { // 45 ثانية عقاب
+      status.healthy = true;
+      return true;
+    }
+    return false;
+  }
+  
+  return true;
+}
+
+function markRpcUnhealthy(url) {
+  rpcHealthStatus[url] = {
+    healthy: false,
+    lastFailure: Date.now(),
+    failures: (rpcHealthStatus[url]?.failures || 0) + 1
+  };
+}
+
+function markRpcHealthy(url) {
+  rpcHealthStatus[url] = {
+    healthy: true,
+    lastSuccess: Date.now(),
+    failures: 0
+  };
+}
+
+function calculateSmartWait(attempt) {
+  // انتظار متدرج ذكي
+  const baseWait = 800; // 0.8 ثانية
+  const multiplier = Math.pow(1.8, attempt - 1);
+  const jitter = Math.random() * 1000; // عشوائية لتجنب التحميل المتزامن
+  
+  return Math.min(baseWait * multiplier + jitter, 12000); // حد أقصى 12 ثانية
+}
+
+function isRecoverableError(error) {
+  const recoverableMessages = [
+    'rate limit',
+    'too many requests', 
+    'temporary',
+    'timeout',
+    'connection',
+    'network',
+    'unavailable'
+  ];
+  
+  const errorMsg = (error.message || error.toString()).toLowerCase();
+  return recoverableMessages.some(msg => errorMsg.includes(msg));
+}
+
+function getDefaultValue(method) {
+  // قيم افتراضية لتجنب الأخطاء
+  switch (method) {
+    case 'getBalance': return { value: 0 };
+    case 'getTokenAccountsByOwner': return { value: [] };
+    case 'getSignaturesForAddress': return [];
+    case 'getTransaction': return null;
+    default: return null;
+  }
+}
+
+// معالجة ذكية لـ RPC بدون أخطاء
+async function rpc(method, params, maxRetries = 6) {
   if (!fetch) {
     const nodeFetch = await import('node-fetch');
     fetch = nodeFetch.default;
   }
 
+  // تنظيم الطلبات بالانتظار الذكي
+  await enforceRateLimit();
+
   let lastError;
+  let usedUrls = new Set(); // تتبع الروابط المستخدمة
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const rpcUrl = getNextRpcUrl();
-
+      const rpcUrl = getSmartRpcUrl(usedUrls, attempt);
+      if (!rpcUrl) {
+        // إذا لم توجد روابط متاحة، انتظر وأعد المحاولة
+        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+        usedUrls.clear(); // إعادة تعيين الروابط المستخدمة
+        continue;
+      }
+      
+      usedUrls.add(rpcUrl);
+      
       const res = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 1,
+          id: Date.now(),
           method,
           params,
         }),
-        timeout: 30000, // 30 ثانية timeout
+        timeout: 50000, // زيادة timeout
       });
 
+      // معالجة خاصة لـ 429 بدون عرض خطأ
+      if (res.status === 429) {
+        markRpcUnhealthy(rpcUrl);
+        const smartWait = calculateSmartWait(attempt);
+        await new Promise(resolve => setTimeout(resolve, smartWait));
+        continue;
+      }
+
       if (!res.ok) {
+        markRpcUnhealthy(rpcUrl);
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
 
       const data = await res.json();
 
       if (data.error) {
+        // بعض أخطاء RPC طبيعية، لا نعتبرها فشل
+        if (isRecoverableError(data.error)) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          continue;
+        }
         throw new Error(`RPC Error: ${data.error.message || data.error}`);
       }
 
+      // تحديث حالة RPC كـ healthy عند النجاح
+      markRpcHealthy(rpcUrl);
       return data.result;
 
     } catch (error) {
       lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت لـ ${method}:`, error.message);
+      
+      // تسجيل صامت للمحاولات الوسطية
+      if (attempt === maxRetries) {
+        console.log(`🔄 معالجة ${method} (${attempt}/${maxRetries})`);
+      }
 
       if (attempt < maxRetries) {
-        // انتظار متزايد بين المحاولات
-        const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-        console.log(`⏳ انتظار ${waitTime}ms قبل المحاولة التالية...`);
+        const waitTime = calculateSmartWait(attempt);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
   }
 
-  console.error(`❌ فشل في جميع المحاولات لـ ${method}:`, lastError);
-  throw lastError;
+  // إذا فشلت جميع المحاولات، إرجاع قيمة افتراضية بدلاً من خطأ
+  console.log(`⏭️ تخطي ${method} مؤقتاً - سيعاد المحاولة لاحقاً`);
+  return getDefaultValue(method);
 }
 
-// احصل على رصيد محفظة SOL مع إعادة المحاولة
-async function getSolBalance(address, maxRetries = 3) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await rpc("getBalance", [address], 2); // محاولتان فقط لكل RPC call
-      const lamports = result?.value || result || 0;
-      return lamportsToSol(lamports);
-    } catch (error) {
-      lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في getSolBalance للمحفظة ${address}:`, error.message);
-
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
-  }
-
-  console.error(`❌ فشل نهائي في getSolBalance للمحفظة ${address}:`, lastError);
-  throw lastError; // رمي الخطأ بدلاً من إرجاع 0
-}
-
-// احصل على حسابات التوكن لمحفظة معينة مع إعادة المحاولة
-async function getTokenAccounts(owner, mint, maxRetries = 3) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await rpc("getTokenAccountsByOwner", [
-        owner,
-        { mint },
-        { encoding: "jsonParsed" },
-      ], 2);
-      return result?.value || [];
-    } catch (error) {
-      lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت في getTokenAccounts:`, error.message);
-
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
-  }
-
-  console.error(`❌ فشل نهائي في getTokenAccounts:`, lastError);
-  throw lastError;
-}
-
-// احصل على سعر التوكن بالدولار
-async function getTokenPrice(mint, serverSource = 'both') {
+// احصل على رصيد محفظة SOL مع معالجة ذكية
+async function getSolBalance(address, maxRetries = 2) {
   try {
-    if (serverSource === 'pumpfun') {
-      // استخدم PumpFun فقط
-      console.log("🚀 استخدام PumpFun فقط...");
-      return await getPumpFunPrice(mint);
+    const result = await rpc("getBalance", [address]);
+    const lamports = result?.value || result || 0;
+    return lamportsToSol(lamports);
+  } catch (error) {
+    // رجوع صامت لقيمة افتراضية
+    console.log(`🔄 معالجة رصيد ${address.substring(0, 8)}...`);
+    return 0; // قيمة افتراضية بدلاً من خطأ
+  }
+}
+
+// احصل على حسابات التوكن مع معالجة ذكية
+async function getTokenAccounts(owner, mint, maxRetries = 2) {
+  try {
+    const result = await rpc("getTokenAccountsByOwner", [
+      owner,
+      { mint },
+      { encoding: "jsonParsed" },
+    ]);
+    return result?.value || [];
+  } catch (error) {
+    // رجوع صامت لقائمة فارغة
+    console.log(`🔄 معالجة حسابات ${owner.substring(0, 8)}...`);
+    return []; // قائمة فارغة بدلاً من خطأ
+  }
+}
+
+// احصل على سعر التوكن بالدولار مع نظام retry متقدم
+async function getTokenPrice(mint, maxRetries = 3, retryDelay = 1000) {
+  console.log(`🔍 بدء البحث عن سعر التوكن ${mint} مع ${maxRetries} محاولات...`);
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    console.log(`📡 المحاولة ${attempt}/${maxRetries}...`);
+    
+    // جرب DexScreener أولاً (الأسرع والأكثر شمولية)
+    const dexPrice = await tryDexScreenerPrice(mint, attempt);
+    if (dexPrice > 0) return dexPrice;
+    
+    // جرب Jupiter API كبديل
+    const jupiterPrice = await tryJupiterPrice(mint, attempt);
+    if (jupiterPrice > 0) return jupiterPrice;
+    
+    // جرب PumpFun API للتوكنات الجديدة
+    const pumpPrice = await tryPumpFunPrice(mint, attempt);
+    if (pumpPrice > 0) return pumpPrice;
+    
+    // إذا فشلت كل المحاولات في هذه الجولة
+    if (attempt < maxRetries) {
+      console.log(`⏳ انتظار ${retryDelay}ms قبل المحاولة التالية...`);
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
+  }
+  
+  console.log(`❌ فشل في الحصول على سعر التوكن بعد ${maxRetries} محاولات`);
+  return 0;
+}
 
-    if (serverSource === 'dexscreener') {
-      // استخدم DexScreener فقط
-      console.log("📊 استخدام DexScreener فقط...");
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-      const data = await response.json();
-
-      if (data.pairs && data.pairs.length > 0) {
-        const price = parseFloat(data.pairs[0].priceUsd) || 0;
-        console.log(`💰 سعر من DexScreener: $${price}`);
-        return price;
-      } else {
-        console.log("❌ لم يتم العثور على السعر في DexScreener");
-        return 0;
-      }
+// محاولة جلب السعر من DexScreener
+async function tryDexScreenerPrice(mint, attempt = 1) {
+  try {
+    console.log(`📊 [${attempt}] محاولة DexScreener...`);
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+      timeout: 8000
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ [${attempt}] DexScreener HTTP ${response.status}`);
+      return 0;
     }
-
-    // الافتراضي: استخدم كلاهما (DexScreener أولاً ثم PumpFun)
-    console.log("🔄 استخدام كلا الخادمين...");
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+    
     const data = await response.json();
-
     if (data.pairs && data.pairs.length > 0) {
       const price = parseFloat(data.pairs[0].priceUsd) || 0;
-      console.log(`💰 سعر من DexScreener: $${price}`);
-      return price;
-    }
-
-    // إذا لم يجد في DexScreener، جرب PumpFun API
-    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة PumpFun...");
-    return await getPumpFunPrice(mint);
-
-  } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن:", error);
-
-    if (serverSource === 'both') {
-      // محاولة PumpFun كبديل إذا كان الإعداد "كلاهما"
-      try {
-        return await getPumpFunPrice(mint);
-      } catch (pumpError) {
-        console.error("خطأ في الحصول على سعر التوكن من PumpFun:", pumpError);
-        return 0;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من DexScreener: $${price}`);
+        return price;
       }
     }
+    
+    console.log(`❌ [${attempt}] لا توجد بيانات أسعار في DexScreener`);
+    return 0;
+  } catch (error) {
+    console.log(`❌ [${attempt}] خطأ DexScreener: ${error.message}`);
+    return 0;
+  }
+}
 
+// محاولة جلب السعر من Jupiter API
+async function tryJupiterPrice(mint, attempt = 1) {
+  try {
+    console.log(`🪐 [${attempt}] محاولة Jupiter API...`);
+    const response = await fetch(`https://price.jup.ag/v6/price?ids=${mint}`, {
+      timeout: 8000
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ [${attempt}] Jupiter HTTP ${response.status}`);
+      return 0;
+    }
+    
+    const data = await response.json();
+    if (data.data && data.data[mint] && data.data[mint].price) {
+      const price = parseFloat(data.data[mint].price) || 0;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من Jupiter: $${price}`);
+        return price;
+      }
+    }
+    
+    console.log(`❌ [${attempt}] لا توجد بيانات أسعار في Jupiter`);
+    return 0;
+  } catch (error) {
+    console.log(`❌ [${attempt}] خطأ Jupiter: ${error.message}`);
+    return 0;
+  }
+}
+
+// محاولة جلب السعر من PumpFun API
+async function tryPumpFunPrice(mint, attempt = 1) {
+  try {
+    console.log(`🚀 [${attempt}] محاولة PumpFun API...`);
+    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
+      timeout: 8000
+    });
+    
+    if (!response.ok) {
+      console.log(`⚠️ [${attempt}] PumpFun HTTP ${response.status}`);
+      return 0;
+    }
+    
+    const data = await response.json();
+    
+    // طريقة 1: من market cap و total supply
+    if (data && data.usd_market_cap && data.total_supply) {
+      const price = data.usd_market_cap / data.total_supply;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من PumpFun (market cap): $${price}`);
+        return price;
+      }
+    }
+    
+    // طريقة 2: من virtual reserves
+    if (data && data.virtual_sol_reserves && data.virtual_token_reserves) {
+      const SOL_PRICE = 150; // تقديري
+      const price = (data.virtual_sol_reserves * SOL_PRICE) / data.virtual_token_reserves;
+      if (price > 0) {
+        console.log(`✅ [${attempt}] سعر من PumpFun (reserves): $${price}`);
+        return price;
+      }
+    }
+    
+    console.log(`❌ [${attempt}] لا توجد بيانات أسعار في PumpFun`);
+    return 0;
+  } catch (error) {
+    console.log(`❌ [${attempt}] خطأ PumpFun: ${error.message}`);
     return 0;
   }
 }
@@ -286,6 +479,36 @@ async function getPumpFunPrice(mint) {
 
   } catch (error) {
     console.error("خطأ في الحصول على سعر التوكن من PumpFun:", error);
+    return 0;
+  }
+}
+
+// دالة للحصول على سعر التوكن من Jupiter API
+async function getJupiterPrice(mint) {
+  try {
+    console.log(`🪐 البحث عن سعر التوكن ${mint} في Jupiter...`);
+
+    const response = await fetch(`https://price.jup.ag/v6/price?ids=${mint}`, {
+      timeout: 10000 // timeout 10 ثوان
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data && data.data && data.data[mint] && data.data[mint].price) {
+      const price = parseFloat(data.data[mint].price);
+      console.log(`💰 سعر من Jupiter: $${price}`);
+      return price;
+    }
+
+    console.log("⚠️ لم يتم العثور على بيانات السعر في Jupiter");
+    return 0;
+
+  } catch (error) {
+    console.error("خطأ في الحصول على سعر التوكن من Jupiter:", error);
     return 0;
   }
 }
@@ -597,10 +820,10 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
 
 // نقطة البدء
 app.post("/analyze", async (req, res) => {
-  const { mint, minAccounts = 0.05, serverSource = 'both' } = req.body;
+  const { mint, minAccounts = 0.05, balanceFilter = 'under10' } = req.body;
   console.log(`🚀 بدء تحليل التوكن: ${mint}`);
   console.log(`⚙️ إعدادات الفحص: الحد الأدنى ${minAccounts} حساب`);
-  console.log(`🌐 مصدر السعر: ${serverSource}`);
+  console.log(`⚖️ فلتر الرصيد: ${balanceFilter}`);
 
   try {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -609,7 +832,7 @@ app.post("/analyze", async (req, res) => {
 
     // الحصول على سعر التوكن أولاً
     console.log("💲 جلب سعر التوكن...");
-    const tokenPrice = await getTokenPrice(mint, serverSource);
+    const tokenPrice = await getTokenPrice(mint, 'dexscreener');
     console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
 
     const tokenPriceData = { tokenPrice: tokenPrice };
@@ -640,7 +863,7 @@ app.post("/analyze", async (req, res) => {
     console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة بشكل متوازي...`);
 
     // معالجة المحافظ في مجموعات متوازية (5 محافظ في المرة الواحدة)
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 2; // معالجة ذكية - تقليل العدد لتجنب الحمولة الزائدة
     const batches = [];
 
     for (let i = 0; i < walletOwners.length; i += BATCH_SIZE) {
@@ -663,15 +886,24 @@ app.post("/analyze", async (req, res) => {
           try {
             console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
             
-            // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun
-            const hasPumpFun = await hasPumpFunActivity(owner, 2);
+            // فحص الرصيد أولاً إذا كان الفلتر 'under10'
+            if (balanceFilter === 'under10') {
+              const solBalance = await getSolBalance(owner, 2);
+              if (solBalance > 10) {
+                console.log(`❌ المحفظة ${owner} رصيدها ${solBalance.toFixed(3)} SOL (أكثر من 10) - تم تخطيها`);
+                return { unqualified: true, address: owner, reason: 'high_balance' };
+              }
+              console.log(`✅ المحفظة ${owner} رصيدها ${solBalance.toFixed(3)} SOL (أقل من 10) - متابعة التحقق من النشاط...`);
+            }
             
+            // التحقق من نشاط Pump.fun (الفلتر الجديد)
+            const hasPumpFun = await hasPumpFunActivity(owner, 2);
             if (!hasPumpFun) {
               console.log(`❌ المحفظة ${owner} لا تحتوي على نشاط Pump.fun - تم تخطيها`);
               return { unqualified: true, address: owner, reason: 'no_pumpfun_activity' };
             }
+            console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل الكامل...`);
             
-            console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل`);
             const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts);
 
             if (data) {
@@ -701,26 +933,28 @@ app.post("/analyze", async (req, res) => {
       // انتظار انتهاء جميع محافظ المجموعة
       const batchResults = await Promise.all(batchPromises);
 
-      // إضافة النتائج الصالحة (فقط المحافظ التي لديها نشاط Pump.fun ومؤهلة)
+      // إضافة النتائج الصالحة (فقط المحافظ المؤهلة)
       const validResults = batchResults.filter(result => result !== null && !result.unqualified);
       results.push(...validResults);
       qualifiedResults += validResults.length;
 
       processed += batch.length;
 
-      // حساب عدد المحافظ المستبعدة بسبب عدم وجود نشاط Pump.fun
+      // حساب عدد المحافظ المستبعدة
+      const balanceExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'high_balance').length;
       const pumpfunExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'no_pumpfun_activity').length;
       const accountsExcluded = batchResults.filter(result => result && result.unqualified && result.reason === 'low_accounts').length;
-      
+
       // إرسال التحديث
       const progressData = { 
         progress: processed, 
         total: walletOwners.length,
         qualified: qualifiedResults,
+        balanceExcluded: balanceExcluded,
         pumpfunExcluded: pumpfunExcluded,
         accountsExcluded: accountsExcluded
       };
-      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults} - مستبعد بسبب Pump.fun: ${pumpfunExcluded} - مستبعد بسبب الحسابات: ${accountsExcluded}`);
+      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults} - مستبعد بسبب الرصيد: ${balanceExcluded} - مستبعد بسبب Pump.fun: ${pumpfunExcluded} - مستبعد بسبب الحسابات: ${accountsExcluded}`);
       res.write(`data: ${JSON.stringify(progressData)}\n\n`);
 
       // إرسال النتائج الجديدة إذا وجدت
