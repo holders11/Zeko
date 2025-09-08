@@ -60,7 +60,8 @@ const EXCLUDED_ADDRESSES = new Set([
   "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", // Pump.fun Program
 ]);
 
-// متغير لتتبع توزيع الطلبات
+// متغير لتتبع توزيع الطلبات على الـ RPCs
+let currentRpcIndex = 0;
 let requestCounter = 0;
 
 // تحويل lamports إلى SOL
@@ -68,41 +69,60 @@ function lamportsToSol(lamports) {
   return lamports / 1e9;
 }
 
-// دالة لإرسال طلب واحد إلى RPC محدد
-async function sendSingleRpcRequest(rpcUrl, method, params, controller) {
+// دالة لإرسال طلب واحد إلى RPC محدد (محسّنة)
+async function sendSingleRpcRequest(rpcUrl, method, params, timeout = 30000) {
   if (!fetch) {
     const nodeFetch = await import('node-fetch');
     fetch = nodeFetch.default;
   }
 
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-    timeout: 30000,
-    signal: controller.signal
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  try {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(`RPC Error: ${data.error.message || data.error}`);
+    }
+
+    return data.result;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
   }
-
-  const data = await res.json();
-
-  if (data.error) {
-    throw new Error(`RPC Error: ${data.error.message || data.error}`);
-  }
-
-  return data.result;
 }
 
-// استعلام عبر RPC مع تشغيل جميع الروابط بالتوازي (الطريقة الأصلية)
-async function rpc(method, params, maxRetries = 2) {
+// دالة للحصول على RPC التالي بالتوزيع الدائري
+function getNextRpc() {
+  const rpcUrl = RPC_URLS[currentRpcIndex];
+  const linkName = currentRpcIndex === 0 ? 'الأول' : currentRpcIndex === 1 ? 'الثاني' : currentRpcIndex === 2 ? 'الثالث' : `${currentRpcIndex + 1}`;
+  
+  currentRpcIndex = (currentRpcIndex + 1) % RPC_URLS.length;
+  
+  return { rpcUrl, linkName, index: (currentRpcIndex - 1 + RPC_URLS.length) % RPC_URLS.length };
+}
+
+// استعلام عبر RPC بالتوزيع الدائري الحقيقي (نسخة محسّنة)
+async function rpc(method, params, maxRetries = 3) {
   if (!RPC_URLS || RPC_URLS.length === 0) {
     throw new Error('❌ لا توجد روابط RPC متاحة!');
   }
@@ -110,57 +130,36 @@ async function rpc(method, params, maxRetries = 2) {
   requestCounter++;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    console.log(`🚀 إرسال طلب #${requestCounter} إلى جميع الـ ${RPC_URLS.length} روابط بالتوازي (محاولة ${attempt}/${maxRetries})`);
-    
-    // إنشاء AbortController لإلغاء الطلبات الأخرى عند الحصول على أول استجابة
-    const controllers = RPC_URLS.map(() => new AbortController());
+    const { rpcUrl, linkName } = getNextRpc();
     
     try {
-      // إرسال نفس الطلب إلى جميع الروابط في نفس الوقت
-      const promises = RPC_URLS.map((rpcUrl, index) => {
-        const linkName = index === 0 ? 'الأول' : index === 1 ? 'الثاني' : index === 2 ? 'الثالث' : `${index + 1}`;
-        console.log(`📡 الرابط ${linkName}: ${rpcUrl.substring(0, 40)}...`);
-        
-        return sendSingleRpcRequest(rpcUrl, method, params, controllers[index])
-          .then(result => ({ result, url: rpcUrl, index }))
-          .catch(error => ({ error, url: rpcUrl, index }));
-      });
-
-      // انتظار أول استجابة ناجحة
-      const results = await Promise.allSettled(promises);
+      console.log(`🎯 إرسال طلب #${requestCounter} للرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
+      console.log(`📡 استخدام الرابط: ${rpcUrl.substring(0, 40)}...`);
       
-      // البحث عن أول استجابة ناجحة
-      for (const promiseResult of results) {
-        if (promiseResult.status === 'fulfilled' && promiseResult.value.result !== undefined) {
-          const { result, index } = promiseResult.value;
-          const linkName = index === 0 ? 'الأول' : index === 1 ? 'الثاني' : index === 2 ? 'الثالث' : `${index + 1}`;
-          console.log(`✅ نجح الرابط ${linkName} في الاستجابة أولاً`);
-          
-          // إلغاء الطلبات الأخرى
-          controllers.forEach((controller, i) => {
-            if (i !== index) {
-              try { controller.abort(); } catch (e) {}
-            }
-          });
-          
-          return result;
-        }
+      // إضافة تأخير بسيط لتجنب rate limiting إذا لم تكن المحاولة الأولى
+      if (attempt > 1) {
+        const baseDelay = 100;
+        const randomDelay = Math.random() * 200;
+        const totalDelay = baseDelay + randomDelay;
+        await new Promise(resolve => setTimeout(resolve, totalDelay));
       }
       
-      // إذا لم تنجح أي استجابة، جمع الأخطاء
-      const errors = results
-        .filter(r => r.status === 'fulfilled' && r.value.error)
-        .map(r => r.value.error.message || r.value.error)
-        .join(', ');
+      const result = await sendSingleRpcRequest(rpcUrl, method, params);
+      console.log(`✅ نجح الرابط ${linkName} في الاستجابة`);
       
-      throw new Error(`جميع الروابط فشلت: ${errors}`);
+      return result;
       
     } catch (error) {
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت لـ ${method}:`, error.message);
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت للرابط ${linkName} لـ ${method}:`, error.message);
       
       if (attempt < maxRetries) {
-        const waitTime = 1000 * attempt;
-        console.log(`⏳ انتظار ${waitTime}ms قبل المحاولة التالية...`);
+        // تزيد وقت الانتظار بناءً على نوع الخطأ
+        const isRateLimit = error.message.includes('429') || error.message.includes('Too Many Requests');
+        const waitTime = isRateLimit 
+          ? Math.min(500 * attempt + Math.random() * 500, 2000)
+          : Math.min(300 * attempt, 1500);
+        
+        console.log(`⏳ انتظار ${Math.round(waitTime)}ms قبل المحاولة التالية...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         console.error(`❌ فشل في جميع المحاولات لـ ${method}:`, error);
@@ -170,62 +169,14 @@ async function rpc(method, params, maxRetries = 2) {
   }
 }
 
-// استعلام عبر RPC محدد (الطريقة الجديدة لتوزيع المحافظ)
-async function rpcSpecific(rpcIndex, method, params, maxRetries = 3) {
-  if (!RPC_URLS || RPC_URLS.length === 0) {
-    throw new Error('❌ لا توجد روابط RPC متاحة!');
-  }
 
-  if (rpcIndex >= RPC_URLS.length) {
-    throw new Error(`❌ مؤشر RPC غير صحيح: ${rpcIndex}`);
-  }
-
-  const rpcUrl = RPC_URLS[rpcIndex];
-  const linkName = rpcIndex === 0 ? 'الأول' : rpcIndex === 1 ? 'الثاني' : rpcIndex === 2 ? 'الثالث' : `${rpcIndex + 1}`;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    console.log(`🎯 إرسال طلب إلى الرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
-    
-    const controller = new AbortController();
-    
-    try {
-      // إضافة تأخير بسيط لتجنب rate limiting
-      if (attempt > 1) {
-        const baseDelay = 50; // 50ms base delay
-        const randomDelay = Math.random() * 100; // random 0-100ms
-        const totalDelay = baseDelay + randomDelay;
-        await new Promise(resolve => setTimeout(resolve, totalDelay));
-      }
-      
-      const result = await sendSingleRpcRequest(rpcUrl, method, params, controller);
-      console.log(`✅ نجح الرابط ${linkName} في الاستجابة`);
-      return result;
-    } catch (error) {
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت للرابط ${linkName} لـ ${method}:`, error.message);
-      
-      if (attempt < maxRetries) {
-        // تزيد وقت الانتظار لـ 429 errors
-        const isRateLimit = error.message.includes('429') || error.message.includes('Too Many Requests');
-        const waitTime = isRateLimit ? Math.min(800 * attempt + Math.random() * 400, 3000) : 500 * attempt;
-        console.log(`⏳ انتظار ${Math.round(waitTime)}ms قبل المحاولة التالية...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      } else {
-        console.error(`❌ فشل في جميع المحاولات للرابط ${linkName} لـ ${method}:`, error);
-        throw error;
-      }
-    }
-  }
-}
-
-// احصل على رصيد محفظة SOL مع إعادة المحاولة (يدعم RPC محدد)
-async function getSolBalance(address, maxRetries = 3, rpcIndex = null) {
+// احصل على رصيد محفظة SOL مع إعادة المحاولة (يستخدم التوزيع الدائري)
+async function getSolBalance(address, maxRetries = 3) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const result = rpcIndex !== null 
-        ? await rpcSpecific(rpcIndex, "getBalance", [address], 2)
-        : await rpc("getBalance", [address], 2);
+      const result = await rpc("getBalance", [address], 2);
       const lamports = result?.value || result || 0;
       return lamportsToSol(lamports);
     } catch (error) {
@@ -239,26 +190,20 @@ async function getSolBalance(address, maxRetries = 3, rpcIndex = null) {
   }
 
   console.error(`❌ فشل نهائي في getSolBalance للمحفظة ${address}:`, lastError);
-  throw lastError; // رمي الخطأ بدلاً من إرجاع 0
+  throw lastError;
 }
 
-// احصل على حسابات التوكن لمحفظة معينة مع إعادة المحاولة (يدعم RPC محدد)
-async function getTokenAccounts(owner, mint, maxRetries = 3, rpcIndex = null) {
+// احصل على حسابات التوكن لمحفظة معينة مع إعادة المحاولة (يستخدم التوزيع الدائري)
+async function getTokenAccounts(owner, mint, maxRetries = 3) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const result = rpcIndex !== null 
-        ? await rpcSpecific(rpcIndex, "getTokenAccountsByOwner", [
-            owner,
-            { mint },
-            { encoding: "jsonParsed" },
-          ], 2)
-        : await rpc("getTokenAccountsByOwner", [
-            owner,
-            { mint },
-            { encoding: "jsonParsed" },
-          ], 2);
+      const result = await rpc("getTokenAccountsByOwner", [
+        owner,
+        { mint },
+        { encoding: "jsonParsed" },
+      ], 2);
       return result?.value || [];
     } catch (error) {
       lastError = error;
@@ -475,8 +420,8 @@ async function getOwnerOfTokenAccount(accountPubkey) {
   return result?.value?.data?.parsed?.info?.owner || null;
 }
 
-// فحص ما إذا كان للمحفظة نشاط في Pump.fun (يدعم RPC محدد)
-async function hasPumpFunActivity(owner, maxRetries = 3, rpcIndex = null) {
+// فحص ما إذا كان للمحفظة نشاط في Pump.fun (يستخدم التوزيع الدائري)
+async function hasPumpFunActivity(owner, maxRetries = 3) {
   const PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
   const VALID_OPERATION_TYPES = ['create', 'buy', 'sell'];
   
@@ -486,10 +431,8 @@ async function hasPumpFunActivity(owner, maxRetries = 3, rpcIndex = null) {
     try {
       console.log(`🔍 فحص نشاط Pump.fun للمحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
       
-      // جلب آخر 20 معاملة للمحفظة
-      const signatures = rpcIndex !== null 
-        ? await rpcSpecific(rpcIndex, "getSignaturesForAddress", [owner, { limit: 20 }], 2)
-        : await rpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
+      // جلب آخر 20 معاملة للمحفظة باستخدام التوزيع الدائري
+      const signatures = await rpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
       
       if (!signatures || signatures.length === 0) {
         console.log(`⏭️ لا توجد معاملات للمحفظة ${owner}`);
@@ -503,10 +446,8 @@ async function hasPumpFunActivity(owner, maxRetries = 3, rpcIndex = null) {
         try {
           const signature = signatures[i].signature;
           
-          // جلب تفاصيل المعاملة
-          const transaction = rpcIndex !== null 
-            ? await rpcSpecific(rpcIndex, "getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2)
-            : await rpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2);
+          // جلب تفاصيل المعاملة باستخدام التوزيع الدائري
+          const transaction = await rpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2);
           
           if (transaction && transaction.transaction && transaction.transaction.message && transaction.transaction.message.instructions) {
             const instructions = transaction.transaction.message.instructions;
@@ -563,63 +504,39 @@ async function hasPumpFunActivity(owner, maxRetries = 3, rpcIndex = null) {
   return false; // إرجاع false في حالة الفشل للأمان
 }
 
-// تحليل محفظة واحدة مع إعادة المحاولة الشاملة (يدعم RPC محدد)
-async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAccounts = 0.05, maxSolBalance = 10, rpcIndex = null) {
+// تحليل محفظة واحدة مع إعادة المحاولة الشاملة (يستخدم التوزيع الدائري)
+async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAccounts = 0.05, maxSolBalance = 10) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`🔍 تحليل المحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
 
-      // جلب جميع البيانات المطلوبة مع آلية إعادة المحاولة لكل طلب
+      // جلب جميع البيانات المطلوبة باستخدام التوزيع الدائري
       let allTokenAccountsResult, specificTokenAccountsResult, solBalance;
 
       try {
-        if (rpcIndex !== null) {
-          // استخدام RPC محدد
-          [allTokenAccountsResult, specificTokenAccountsResult, solBalance] = await Promise.all([
-            rpcSpecific(rpcIndex, "getTokenAccountsByOwner", [
-              owner,
-              { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
-              { encoding: "jsonParsed" }
-            ], 2),
-            getTokenAccounts(owner, mint, 2, rpcIndex),
-            getSolBalance(owner, 2, rpcIndex)
-          ]);
-        } else {
-          // استخدام الطريقة الأصلية
-          [allTokenAccountsResult, specificTokenAccountsResult, solBalance] = await Promise.all([
-            rpc("getTokenAccountsByOwner", [
-              owner,
-              { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
-              { encoding: "jsonParsed" }
-            ], 2),
-            getTokenAccounts(owner, mint, 2),
-            getSolBalance(owner, 2)
-          ]);
-        }
+        // استخدام التوزيع الدائري للجميع - كل طلب يذهب لـ RPC مختلف
+        [allTokenAccountsResult, specificTokenAccountsResult, solBalance] = await Promise.all([
+          rpc("getTokenAccountsByOwner", [
+            owner,
+            { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+            { encoding: "jsonParsed" }
+          ], 2),
+          getTokenAccounts(owner, mint, 2),
+          getSolBalance(owner, 2)
+        ]);
       } catch (parallelError) {
         // إذا فشل الطلب المتوازي، جرب بشكل تسلسلي
         console.warn(`⚠️ فشل الطلب المتوازي، محاولة تسلسلية...`);
-        if (rpcIndex !== null) {
-          allTokenAccountsResult = await rpcSpecific(rpcIndex, "getTokenAccountsByOwner", [
-            owner,
-            { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
-            { encoding: "jsonParsed" }
-          ], 2);
-          
-          specificTokenAccountsResult = await getTokenAccounts(owner, mint, 2, rpcIndex);
-          solBalance = await getSolBalance(owner, 2, rpcIndex);
-        } else {
-          allTokenAccountsResult = await rpc("getTokenAccountsByOwner", [
-            owner,
-            { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
-            { encoding: "jsonParsed" }
-          ], 2);
+        allTokenAccountsResult = await rpc("getTokenAccountsByOwner", [
+          owner,
+          { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+          { encoding: "jsonParsed" }
+        ], 2);
 
-          specificTokenAccountsResult = await getTokenAccounts(owner, mint, 2);
-          solBalance = await getSolBalance(owner, 2);
-        }
+        specificTokenAccountsResult = await getTokenAccounts(owner, mint, 2);
+        solBalance = await getSolBalance(owner, 2);
       }
 
       // فحص الحد الأقصى للرصيد أولاً
@@ -752,16 +669,15 @@ app.post("/analyze", async (req, res) => {
     let processed = 0;
     let qualifiedResults = 0;
 
-    // معالجة المحافظ بنظام توزيع RPC الجديد (5 محافظ لكل RPC = 15 محفظة متزامنة)
-    const WALLETS_PER_RPC = 5; // عدد المحافظ لكل RPC
-    const TOTAL_BATCH_SIZE = WALLETS_PER_RPC * RPC_URLS.length; // 15 محفظة إجمالية
+    // معالجة المحافظ بالتوزيع الدائري الحقيقي - كل محفظة تذهب لـ RPC مختلف
+    const CONCURRENT_BATCHES = 20; // معالجة 20 محفظة في نفس الوقت
 
-    console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة بنظام توزيع RPC (معالجة ${TOTAL_BATCH_SIZE} محفظة في المرة الواحدة)...`);
-    console.log(`🎯 توزيع: ${WALLETS_PER_RPC} محافظ لكل RPC × ${RPC_URLS.length} RPC = ${TOTAL_BATCH_SIZE} محفظة متزامنة`);
+    console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة بالتوزيع الدائري الحقيقي...`);
+    console.log(`🎯 توزيع: كل محفظة تذهب لـ RPC مختلف، معالجة ${CONCURRENT_BATCHES} محفظة بالتوازي`);
     const batches = [];
 
-    for (let i = 0; i < walletOwners.length; i += TOTAL_BATCH_SIZE) {
-      batches.push(walletOwners.slice(i, i + TOTAL_BATCH_SIZE));
+    for (let i = 0; i < walletOwners.length; i += CONCURRENT_BATCHES) {
+      batches.push(walletOwners.slice(i, i + CONCURRENT_BATCHES));
     }
 
     for (const batch of batches) {
@@ -771,77 +687,60 @@ app.post("/analyze", async (req, res) => {
         return;
       }
 
-      // توزيع المحافظ على الـ RPC المختلفة
-      const rpcGroupPromises = [];
-      
-      // تقسيم المحافظ إلى مجموعات بحسب عدد الـ RPC
-      for (let rpcIndex = 0; rpcIndex < RPC_URLS.length; rpcIndex++) {
-        const startIndex = rpcIndex * WALLETS_PER_RPC;
-        const endIndex = Math.min(startIndex + WALLETS_PER_RPC, batch.length);
-        const rpcWallets = batch.slice(startIndex, endIndex);
-        
-        if (rpcWallets.length > 0) {
-          const linkName = rpcIndex === 0 ? 'الأول' : rpcIndex === 1 ? 'الثاني' : rpcIndex === 2 ? 'الثالث' : `${rpcIndex + 1}`;
-          console.log(`🎯 توزيع ${rpcWallets.length} محفظة على الرابط ${linkName}`);
-          
-          // معالجة محافظ هذا الـ RPC بشكل متوازي مع تأخير بسيط
-          const rpcGroupPromise = Promise.all(rpcWallets.map(async (owner, walletIndex) => {
-            // تأخير بسيط بين المحافظ لتجنب الضغط على RPC
-            if (walletIndex > 0) {
-              const staggerDelay = walletIndex * 30; // 30ms between wallets
-              await new Promise(resolve => setTimeout(resolve, staggerDelay));
-            }
-            let retries = 0;
-            const maxRetries = 3;
-
-            while (retries < maxRetries) {
-              try {
-                console.log(`📝 معالجة المحفظة: ${owner} [الرابط ${linkName}] ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
-                
-                // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun باستخدام RPC محدد
-                const hasPumpFun = await hasPumpFunActivity(owner, 2, rpcIndex);
-                
-                if (!hasPumpFun) {
-                  console.log(`❌ المحفظة ${owner} [الرابط ${linkName}] لا تحتوي على نشاط Pump.fun - تم تخطيها`);
-                  return { unqualified: true, address: owner, reason: 'no_pumpfun_activity' };
-                }
-                
-                console.log(`✅ المحفظة ${owner} [الرابط ${linkName}] تحتوي على نشاط Pump.fun - متابعة التحليل`);
-                const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts, maxSolBalance, rpcIndex);
-
-                if (data) {
-                  console.log(`✅ محفظة مؤهلة: ${data.address} [الرابط ${linkName}] - يمكن استرداد ${data.reclaimable} SOL`);
-                  return data;
-                } else {
-                  console.log(`❌ محفظة غير مؤهلة: ${owner} [الرابط ${linkName}]`);
-                  return { unqualified: true, address: owner, reason: 'low_accounts' };
-                }
-              } catch (error) {
-                retries++;
-                console.error(`❌ خطأ في معالجة المحفظة ${owner} [الرابط ${linkName}] (محاولة ${retries}/${maxRetries}):`, error.message);
-
-                if (retries < maxRetries) {
-                  const isRateLimit = error.message.includes('429') || error.message.includes('Too Many Requests');
-                  const waitTime = isRateLimit ? Math.min(1500 * retries + Math.random() * 800, 8000) : Math.min(1000 * retries, 5000);
-                  console.log(`⏳ إعادة محاولة المحفظة ${owner} [الرابط ${linkName}] بعد ${Math.round(waitTime)}ms...`);
-                  await new Promise(resolve => setTimeout(resolve, waitTime));
-                } else {
-                  console.error(`❌ فشل نهائي في معالجة المحفظة ${owner} [الرابط ${linkName}] بعد ${maxRetries} محاولات`);
-                  throw new Error(`فشل نهائي في معالجة المحفظة ${owner}`);
-                }
-              }
-            }
-          }));
-          
-          rpcGroupPromises.push(rpcGroupPromise);
+      // معالجة كل محفظة مع توزيع دائري على الـ RPCs
+      const walletPromises = batch.map(async (owner, walletIndex) => {
+        // تأخير بسيط بين المحافظ لتجنب الضغط
+        if (walletIndex > 0) {
+          const staggerDelay = walletIndex * 50; // 50ms بين المحافظ
+          await new Promise(resolve => setTimeout(resolve, staggerDelay));
         }
-      }
-      
-      // انتظار انتهاء جميع مجموعات الـ RPC
-      const allRpcResults = await Promise.all(rpcGroupPromises);
-      
-      // تجميع النتائج من جميع الـ RPC
-      const batchResults = allRpcResults.flat();
+
+        let retries = 0;
+        const maxRetries = 3;
+
+        while (retries < maxRetries) {
+          try {
+            console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
+            
+            // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun باستخدام التوزيع الدائري
+            const hasPumpFun = await hasPumpFunActivity(owner, 2);
+            
+            if (!hasPumpFun) {
+              console.log(`❌ المحفظة ${owner} لا تحتوي على نشاط Pump.fun - تم تخطيها`);
+              return { unqualified: true, address: owner, reason: 'no_pumpfun_activity' };
+            }
+            
+            console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل`);
+            const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts, maxSolBalance);
+
+            if (data) {
+              console.log(`✅ محفظة مؤهلة: ${data.address} - يمكن استرداد ${data.reclaimable} SOL`);
+              return data;
+            } else {
+              console.log(`❌ محفظة غير مؤهلة: ${owner}`);
+              return { unqualified: true, address: owner, reason: 'low_accounts' };
+            }
+          } catch (error) {
+            retries++;
+            console.error(`❌ خطأ في معالجة المحفظة ${owner} (محاولة ${retries}/${maxRetries}):`, error.message);
+
+            if (retries < maxRetries) {
+              const isRateLimit = error.message.includes('429') || error.message.includes('Too Many Requests');
+              const waitTime = isRateLimit 
+                ? Math.min(1200 * retries + Math.random() * 800, 6000) 
+                : Math.min(800 * retries, 3000);
+              console.log(`⏳ إعادة محاولة المحفظة ${owner} بعد ${Math.round(waitTime)}ms...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            } else {
+              console.error(`❌ فشل نهائي في معالجة المحفظة ${owner} بعد ${maxRetries} محاولات`);
+              return { unqualified: true, address: owner, reason: 'error', error: error.message };
+            }
+          }
+        }
+      });
+
+      // انتظار انتهاء جميع محافظ هذه المجموعة
+      const batchResults = await Promise.all(walletPromises);
 
 
       // إضافة النتائج الصالحة (فقط المحافظ التي لديها نشاط Pump.fun ومؤهلة)
@@ -873,7 +772,7 @@ app.post("/analyze", async (req, res) => {
         const batchData = { 
           batch: true, 
           results: validResults, 
-          batchNumber: Math.floor(processed / TOTAL_BATCH_SIZE),
+          batchNumber: Math.floor(processed / CONCURRENT_BATCHES),
           totalBatches: batches.length
         };
         res.write(`data: ${JSON.stringify(batchData)}\n\n`);
