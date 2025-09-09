@@ -172,8 +172,6 @@ async function rpc(method, params, maxRetries = 3) {
     const { rpcUrl, linkName } = getNextRpc();
     
     try {
-      console.log(`🎯 إرسال طلب #${requestCounter} للرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
-      console.log(`📡 استخدام الرابط: ${rpcUrl.substring(0, 40)}...`);
       
       // إضافة تأخير بسيط لتجنب rate limiting إذا لم تكن المحاولة الأولى
       if (attempt > 1) {
@@ -184,7 +182,6 @@ async function rpc(method, params, maxRetries = 3) {
       }
       
       const result = await sendSingleRpcRequest(rpcUrl, method, params);
-      console.log(`✅ نجح الرابط ${linkName} في الاستجابة`);
       
       return result;
       
@@ -220,8 +217,6 @@ async function pumpFunRpc(method, params, maxRetries = 3) {
     const { rpcUrl, linkName } = getNextPumpFunRpc();
     
     try {
-      console.log(`🎭 إرسال طلب PumpFun #${pumpFunRequestCounter} للرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
-      console.log(`🔍 استخدام رابط BLANC: ${rpcUrl.substring(0, 40)}...`);
       
       // إضافة تأخير بسيط لتجنب rate limiting إذا لم تكن المحاولة الأولى
       if (attempt > 1) {
@@ -232,7 +227,6 @@ async function pumpFunRpc(method, params, maxRetries = 3) {
       }
       
       const result = await sendSingleRpcRequest(rpcUrl, method, params);
-      console.log(`✅ نجح رابط BLANC ${linkName} في الاستجابة`);
       
       return result;
       
@@ -317,7 +311,23 @@ async function getTokenPrice(mint, serverSource = 'both') {
     if (serverSource === 'dexscreener') {
       // استخدم DexScreener فقط
       console.log("📊 استخدام DexScreener فقط...");
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://dexscreener.com/',
+          'Connection': 'keep-alive'
+        }
+      });
+
+      // فحص إذا كانت الاستجابة HTML بدلاً من JSON
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('text/html')) {
+        console.warn("⚠️ DexScreener أرسل صفحة HTML بدلاً من JSON - مشكلة مؤقتة");
+        throw new Error("DexScreener returned HTML instead of JSON");
+      }
+
       const data = await response.json();
 
       if (data.pairs && data.pairs.length > 0) {
@@ -332,7 +342,24 @@ async function getTokenPrice(mint, serverSource = 'both') {
 
     // الافتراضي: استخدم كلاهما (DexScreener أولاً ثم PumpFun)
     console.log("🔄 استخدام كلا الخادمين...");
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://dexscreener.com/',
+        'Connection': 'keep-alive'
+      }
+    });
+
+    // فحص إذا كانت الاستجابة HTML بدلاً من JSON
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('text/html')) {
+      console.warn("⚠️ DexScreener أرسل صفحة HTML بدلاً من JSON - الانتقال إلى PumpFun");
+      console.log("🔍 محاولة PumpFun بعد فشل DexScreener...");
+      return await getPumpFunPrice(mint);
+    }
+
     const data = await response.json();
 
     if (data.pairs && data.pairs.length > 0) {
@@ -346,11 +373,19 @@ async function getTokenPrice(mint, serverSource = 'both') {
     return await getPumpFunPrice(mint);
 
   } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن:", error);
+    // فحص إذا كان الخطأ يحتوي على "Unexpected token '<'" (مشكلة HTML)
+    const isHtmlError = error.message && error.message.includes('Unexpected token \'<\'');
+    
+    if (isHtmlError) {
+      console.warn("⚠️ DexScreener أرسل HTML بدلاً من JSON - مشكلة Rate Limiting مؤقتة");
+    } else {
+      console.error("خطأ في الحصول على سعر التوكن:", error);
+    }
 
     if (serverSource === 'both') {
       // محاولة PumpFun كبديل إذا كان الإعداد "كلاهما"
       try {
+        console.log("🔄 التحويل إلى PumpFun بعد فشل DexScreener...");
         return await getPumpFunPrice(mint);
       } catch (pumpError) {
         console.error("خطأ في الحصول على سعر التوكن من PumpFun:", pumpError);
@@ -368,7 +403,15 @@ async function getPumpFunPrice(mint) {
     console.log(`🚀 البحث عن سعر التوكن ${mint} في PumpFun...`);
 
     // استخدام REST API بدلاً من WebSocket للبساطة
-    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`);
+    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://pump.fun/',
+        'Connection': 'keep-alive'
+      }
+    });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -441,7 +484,6 @@ async function getHolders(mint) {
     }
 
     // الحصول على سعر التوكن
-    console.log("💰 جلب سعر التوكن...");
     const tokenPrice = await getTokenPrice(mint);
     console.log(`💲 سعر التوكن: $${tokenPrice}`);
 
@@ -515,17 +557,14 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`🔍 فحص نشاط Pump.fun للمحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
-      
+        
       // جلب آخر 20 معاملة للمحفظة باستخدام روابط BLANC
       const signatures = await pumpFunRpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
       
       if (!signatures || signatures.length === 0) {
-        console.log(`⏭️ لا توجد معاملات للمحفظة ${owner}`);
         return false;
       }
       
-      console.log(`📜 تم العثور على ${signatures.length} معاملة، فحص التفاصيل...`);
       
       // فحص كل معاملة للبحث عن برنامج Pump.fun
       for (let i = 0; i < signatures.length; i++) {
@@ -547,19 +586,16 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
                   const operationType = instruction.parsed.type.toLowerCase();
                   
                   if (VALID_OPERATION_TYPES.includes(operationType)) {
-                    console.log(`✅ تم العثور على عملية Pump.fun صحيحة (${operationType}) في المعاملة ${signature} للمحفظة ${owner}`);
                     return true;
                   }
                 }
                 
                 // في حالة عدم وجود parsed data، قد تكون العملية مشفرة
                 // نفحص ما إذا كان البرنامج صحيح على الأقل
-                console.log(`🔍 تم العثور على تعليمة Pump.fun في المعاملة ${signature} للمحفظة ${owner} لكن بدون parsed data`);
                 
                 // يمكن أن نقبل العملية إذا كان البرنامج صحيح حتى لو لم نستطع تحليل النوع
                 // أو يمكن أن نكون أكثر صرامة ونرفضها
                 // للأمان، سنقبلها إذا كان البرنامج صحيح
-                console.log(`✅ تم قبول عملية Pump.fun غير محللة في المعاملة ${signature} للمحفظة ${owner}`);
                 return true;
               }
             }
@@ -726,7 +762,6 @@ app.post("/analyze", async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
 
     // الحصول على سعر التوكن أولاً
-    console.log("💲 جلب سعر التوكن...");
     const tokenPrice = await getTokenPrice(mint, serverSource);
     console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
 
@@ -786,9 +821,7 @@ app.post("/analyze", async (req, res) => {
 
         while (retries < maxRetries) {
           try {
-            console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
-            
-            // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun باستخدام التوزيع الدائري
+            // فحص ما إذا كان للمحفظة نشاط في Pump.fun باستخدام التوزيع الدائري
             const hasPumpFun = await hasPumpFunActivity(owner, 2);
             
             if (!hasPumpFun) {
@@ -796,7 +829,6 @@ app.post("/analyze", async (req, res) => {
               return { unqualified: true, address: owner, reason: 'no_pumpfun_activity' };
             }
             
-            console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل`);
             const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts, maxSolBalance);
 
             if (data) {
