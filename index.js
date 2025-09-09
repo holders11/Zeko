@@ -20,12 +20,24 @@ console.log("🔍 فحص متغيرات البيئة:");
 console.log("RPC_URL:", process.env.RPC_URL ? "✅ معرف" : "❌ غير معرف");
 console.log("RPC_URL2:", process.env.RPC_URL2 ? "✅ معرف" : "❌ غير معرف");
 console.log("RPC_URL3:", process.env.RPC_URL3 ? "✅ معرف" : "❌ غير معرف");
+console.log("RPC_URL4:", process.env.RPC_URL4 ? "✅ معرف" : "❌ غير معرف");
+console.log("BLANC_URL:", process.env.BLANC_URL ? "✅ معرف" : "❌ غير معرف");
+console.log("BLANC_URL2:", process.env.BLANC_URL2 ? "✅ معرف" : "❌ غير معرف");
+console.log("BLANC_URL3:", process.env.BLANC_URL3 ? "✅ معرف" : "❌ غير معرف");
 
 const RPC_URLS = [
   process.env.RPC_URL,
   process.env.RPC_URL2,
-  process.env.RPC_URL3
+  process.env.RPC_URL3,
+  process.env.RPC_URL4
 ].filter(Boolean); // إزالة القيم الفارغة
+
+// روابط BLANC لفحص المعاملات والأرصدة
+const BLANC_RPC_URLS = [
+  process.env.BLANC_URL,
+  process.env.BLANC_URL2,
+  process.env.BLANC_URL3
+].filter(Boolean);
 
 console.log(`📊 عدد الروابط المحملة: ${RPC_URLS.length}`);
 console.log("🌐 الروابط المستخدمة:");
@@ -34,9 +46,22 @@ RPC_URLS.forEach((url, index) => {
   console.log(`  ${index + 1}. ${maskedUrl}`);
 });
 
+console.log(`🎭 عدد روابط BLANC المحملة: ${BLANC_RPC_URLS.length}`);
+console.log("🔍 روابط فحص المعاملات:");
+BLANC_RPC_URLS.forEach((url, index) => {
+  const maskedUrl = url ? url.substring(0, 30) + "..." : "غير محدد";
+  console.log(`  ${index + 1}. ${maskedUrl}`);
+});
+
 // التحقق من وجود روابط RPC صحيحة
 if (RPC_URLS.length === 0) {
-  console.error("❌ خطأ: لم يتم تعيين أي من متغيرات البيئة RPC_URL, RPC_URL2, RPC_URL3");
+  console.error("❌ خطأ: لم يتم تعيين أي من متغيرات البيئة RPC_URL, RPC_URL2, RPC_URL3, RPC_URL4");
+  process.exit(1);
+}
+
+// التحقق من وجود روابط BLANC صحيحة
+if (BLANC_RPC_URLS.length === 0) {
+  console.error("❌ خطأ: لم يتم تعيين أي من متغيرات البيئة BLANC_URL, BLANC_URL2, BLANC_URL3");
   process.exit(1);
 }
 const RENT_EXEMPT_LAMPORTS = 2039280; // تقريبي لحسابات التوكن
@@ -63,6 +88,10 @@ const EXCLUDED_ADDRESSES = new Set([
 // متغير لتتبع توزيع الطلبات على الـ RPCs
 let currentRpcIndex = 0;
 let requestCounter = 0;
+
+// متغير لتتبع توزيع طلبات PumpFun على روابط BLANC
+let currentPumpFunRpcIndex = 0;
+let pumpFunRequestCounter = 0;
 
 // تحويل lamports إلى SOL
 function lamportsToSol(lamports) {
@@ -121,6 +150,16 @@ function getNextRpc() {
   return { rpcUrl, linkName, index: (currentRpcIndex - 1 + RPC_URLS.length) % RPC_URLS.length };
 }
 
+// دالة للحصول على رابط BLANC التالي لفحص PumpFun
+function getNextPumpFunRpc() {
+  const rpcUrl = BLANC_RPC_URLS[currentPumpFunRpcIndex];
+  const linkName = currentPumpFunRpcIndex === 0 ? 'BLANC الأول' : currentPumpFunRpcIndex === 1 ? 'BLANC الثاني' : `BLANC ${currentPumpFunRpcIndex + 1}`;
+  
+  currentPumpFunRpcIndex = (currentPumpFunRpcIndex + 1) % BLANC_RPC_URLS.length;
+  
+  return { rpcUrl, linkName };
+}
+
 // استعلام عبر RPC بالتوزيع الدائري الحقيقي (نسخة محسّنة)
 async function rpc(method, params, maxRetries = 3) {
   if (!RPC_URLS || RPC_URLS.length === 0) {
@@ -169,6 +208,53 @@ async function rpc(method, params, maxRetries = 3) {
   }
 }
 
+// استعلام عبر روابط BLANC للمعاملات وفحص PumpFun (يستخدم التوزيع الدائري)
+async function pumpFunRpc(method, params, maxRetries = 3) {
+  if (!BLANC_RPC_URLS || BLANC_RPC_URLS.length === 0) {
+    throw new Error('❌ لا توجد روابط BLANC متاحة!');
+  }
+
+  pumpFunRequestCounter++;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const { rpcUrl, linkName } = getNextPumpFunRpc();
+    
+    try {
+      console.log(`🎭 إرسال طلب PumpFun #${pumpFunRequestCounter} للرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
+      console.log(`🔍 استخدام رابط BLANC: ${rpcUrl.substring(0, 40)}...`);
+      
+      // إضافة تأخير بسيط لتجنب rate limiting إذا لم تكن المحاولة الأولى
+      if (attempt > 1) {
+        const baseDelay = 150;
+        const randomDelay = Math.random() * 300;
+        const totalDelay = baseDelay + randomDelay;
+        await new Promise(resolve => setTimeout(resolve, totalDelay));
+      }
+      
+      const result = await sendSingleRpcRequest(rpcUrl, method, params);
+      console.log(`✅ نجح رابط BLANC ${linkName} في الاستجابة`);
+      
+      return result;
+      
+    } catch (error) {
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت لرابط BLANC ${linkName} لـ ${method}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        // تزيد وقت الانتظار بناءً على نوع الخطأ
+        const isRateLimit = error.message.includes('429') || error.message.includes('Too Many Requests');
+        const waitTime = isRateLimit 
+          ? Math.min(600 * attempt + Math.random() * 600, 2500)
+          : Math.min(400 * attempt, 2000);
+        
+        console.log(`⏳ انتظار ${Math.round(waitTime)}ms قبل المحاولة التالية...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      } else {
+        console.error(`❌ فشل في جميع المحاولات لـ ${method} على روابط BLANC:`, error);
+        throw error;
+      }
+    }
+  }
+}
 
 // احصل على رصيد محفظة SOL مع إعادة المحاولة (يستخدم التوزيع الدائري)
 async function getSolBalance(address, maxRetries = 3) {
@@ -431,8 +517,8 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
     try {
       console.log(`🔍 فحص نشاط Pump.fun للمحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
       
-      // جلب آخر 20 معاملة للمحفظة باستخدام التوزيع الدائري
-      const signatures = await rpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
+      // جلب آخر 20 معاملة للمحفظة باستخدام روابط BLANC
+      const signatures = await pumpFunRpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
       
       if (!signatures || signatures.length === 0) {
         console.log(`⏭️ لا توجد معاملات للمحفظة ${owner}`);
@@ -446,8 +532,8 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
         try {
           const signature = signatures[i].signature;
           
-          // جلب تفاصيل المعاملة باستخدام التوزيع الدائري
-          const transaction = await rpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2);
+          // جلب تفاصيل المعاملة باستخدام روابط BLANC
+          const transaction = await pumpFunRpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2);
           
           if (transaction && transaction.transaction && transaction.transaction.message && transaction.transaction.message.instructions) {
             const instructions = transaction.transaction.message.instructions;
