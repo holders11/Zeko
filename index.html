@@ -868,9 +868,18 @@
           const data = JSON.parse(e.data);
 
           if (data.error) {
-            // التحقق من نوع الخطأ
-            if (data.error.includes('لم يتم العثور على سعر التوكن') || data.error.includes('Failed to get token price')) {
+            // التحقق من نوع الخطأ - فحص شامل لجميع رسائل فشل جلب السعر
+            const isPriceError = data.error.includes('لم يتم العثور على سعر التوكن') || 
+                                data.error.includes('Failed to get token price') ||
+                                data.error.includes('لم يتم العثور على سعر') ||
+                                data.error.includes('سعر التوكن') ||
+                                data.error.includes('token price') ||
+                                data.error.includes('DexScreener') ||
+                                data.error.includes('جميع المصادر');
+            
+            if (isPriceError) {
               // إظهار نافذة إدخال السعر اليدوي
+              console.log('🚨 فشل جلب السعر - إظهار نافذة السعر اليدوي');
               currentMintForManualPrice = document.getElementById('mint').value;
               showManualPricePanel();
               return;

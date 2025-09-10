@@ -468,11 +468,11 @@ async function getPumpFunPrice(mint) {
     }
 
     console.log("⚠️ لم يتم العثور على بيانات السعر في PumpFun");
-    return 0;
+    throw new Error('لم يتم العثور على بيانات السعر في PumpFun');
 
   } catch (error) {
     console.error("خطأ في الحصول على سعر التوكن من PumpFun:", error);
-    return 0;
+    throw error;
   }
 }
 
@@ -835,8 +835,18 @@ app.post("/analyze", getUserSession, async (req, res) => {
 
     // الحصول على سعر التوكن أولاً
     console.log("💲 جلب سعر التوكن...");
-    const tokenPrice = await getTokenPrice(mint, serverSource, manualPriceSOL);
-    console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
+    let tokenPrice;
+    try {
+      tokenPrice = await getTokenPrice(mint, serverSource, manualPriceSOL);
+      console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
+    } catch (priceError) {
+      console.error("❌ فشل في جلب سعر التوكن:", priceError.message);
+      // إرسال رسالة خطأ للعميل لإظهار نافذة السعر اليدوي
+      const errorData = { error: priceError.message };
+      res.write(`data: ${JSON.stringify(errorData)}\n\n`);
+      res.end();
+      return;
+    }
 
     const tokenPriceData = { tokenPrice: tokenPrice };
     console.log("📤 إرسال سعر التوكن:", tokenPriceData);
