@@ -144,6 +144,46 @@
       border: 1px solid rgba(255,255,255,0.1);
     }
 
+    /* تصميم دائرة العداد للمحافظ المكررة */
+    .wallet-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      color: white;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      font-size: 12px;
+      font-weight: bold;
+      text-align: center;
+      line-height: 20px;
+      margin-left: 5px;
+      box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      position: relative;
+      animation: pulse-badge 2s infinite;
+    }
+
+    @keyframes pulse-badge {
+      0% {
+        transform: scale(1);
+        box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+      }
+      50% {
+        transform: scale(1.1);
+        box-shadow: 0 4px 8px rgba(239, 68, 68, 0.5);
+      }
+      100% {
+        transform: scale(1);
+        box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+      }
+    }
+
+    body.dark-mode .wallet-badge {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      box-shadow: 0 2px 4px rgba(239, 68, 68, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
     body.dark-mode #holdersInfo {
       color: #ffffff;
     }
@@ -665,7 +705,7 @@
             <th onclick="sortTable(1)" style="cursor: pointer;">الرصيد <span class="sort-arrow">⇅</span></th>
             <th onclick="sortTable(2)" style="cursor: pointer;">قيمة التوكن <span class="sort-arrow">⇅</span></th>
             <th onclick="sortTable(3)" style="cursor: pointer;">إجمالي الـ Rent <span class="sort-arrow">⇅</span></th>
-            <th onclick="sortTable(4)" style="cursor: pointer;">الحسابات <span class="sort-arrow">⇅</span></th>
+            <th>العلامة</th>
             <th>نسخ</th>
           </tr>
         </thead>
@@ -697,6 +737,9 @@
     let allWalletData = [];
     let isScanning = false;
     let currentEventSource = null;
+    
+    // نظام تتبع المحافظ المكررة
+    let walletOccurrences = {}; // عداد ظهور كل محفظة
 
     // متغيرات تتبع الإحصائيات
     let totalScannedWallets = 0;
@@ -826,6 +869,9 @@
               } else {
                 // محفظة مؤهلة - حفظ البيانات للترتيب
                 allWalletData.push(wallet);
+                
+                // تحديث عداد ظهور المحفظة
+                updateWalletOccurrences(wallet.address);
 
                 // تحديث الإجماليات
                 totalReclaimableSOL += parseFloat(wallet.reclaimable);
@@ -990,15 +1036,19 @@
 
       allWalletData.forEach((wallet) => {
         const row = document.createElement("tr");
-        const accountsInfo = `${wallet.accountsCount} (T:${wallet.tokenAccounts || 0}, N:${wallet.nftAccounts || 0}, C:${wallet.cleanupAccounts || 0})`;
         // اختصار العنوان للهاتف المحمول
         const shortAddress = `${wallet.address.substring(0, 4)}..${wallet.address.substring(wallet.address.length - 3)}`;
+        
+        // إضافة دائرة العداد للمحافظ المكررة في خانة منفصلة
+        const occurrenceCount = walletOccurrences[wallet.address] || 1;
+        const badgeHtml = occurrenceCount > 1 ? `<span class="wallet-badge">${occurrenceCount}</span>` : '';
+        
         row.innerHTML = `
           <td title="${wallet.address}">${shortAddress}</td>
           <td>${wallet.solBalance} SOL</td>
           <td>$${wallet.tokenValue}</td>
           <td>${wallet.reclaimable} SOL</td>
-          <td>${accountsInfo}</td>
+          <td style="text-align: center;">${badgeHtml}</td>
           <td><span class="copy-btn" onclick="copy('${wallet.address}')">📋</span></td>
         `;
         tbody.appendChild(row);
@@ -1137,9 +1187,42 @@
       });
     }
 
+    // حفظ واسترجاع عدادات المحافظ من localStorage
+    function saveWalletOccurrences() {
+      localStorage.setItem('walletOccurrences', JSON.stringify(walletOccurrences));
+    }
+
+    function loadWalletOccurrences() {
+      const saved = localStorage.getItem('walletOccurrences');
+      if (saved) {
+        walletOccurrences = JSON.parse(saved);
+      }
+    }
+
+    // تحديث عداد المحافظ عند إضافة نتائج جديدة
+    function updateWalletOccurrences(walletAddress) {
+      if (walletOccurrences[walletAddress]) {
+        walletOccurrences[walletAddress]++;
+      } else {
+        walletOccurrences[walletAddress] = 1;
+      }
+      saveWalletOccurrences();
+    }
+
+    // دالة لإعادة تعيين عدادات المحافظ
+    function resetWalletOccurrences() {
+      if (confirm('هل أنت متأكد من إعادة تعيين جميع عدادات المحافظ؟')) {
+        walletOccurrences = {};
+        saveWalletOccurrences();
+        renderTable(); // إعادة رسم الجدول
+        alert('تم إعادة تعيين عدادات المحافظ بنجاح');
+      }
+    }
+
     // تهيئة الإعدادات عند تحميل الصفحة
     document.addEventListener('DOMContentLoaded', function() {
       initializeTheme(); // تهيئة الوضع الليلي أولاً
+      loadWalletOccurrences(); // تحميل عدادات المحافظ المحفوظة
       updateSettingsDisplay();
       updateActiveButtons();
       updateBalanceButtons();
