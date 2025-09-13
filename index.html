@@ -144,6 +144,12 @@
       border: 1px solid rgba(255,255,255,0.1);
     }
 
+    body.dark-mode .error-notification {
+      background: linear-gradient(145deg, #f44336 0%, #d32f2f 100%);
+      box-shadow: 0 8px 25px rgba(244, 67, 54, 0.4);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
     /* تصميم دائرة العداد للمحافظ المكررة */
     .wallet-badge {
       display: inline-block;
@@ -184,31 +190,6 @@
       border: 1px solid rgba(255, 255, 255, 0.3);
     }
 
-    body.dark-mode #manualPricePanel {
-      background: linear-gradient(145deg, #3d2f1f 0%, #2d1f0f 100%) !important;
-      border: 1px solid rgba(255, 193, 7, 0.3) !important;
-      color: #ffc107;
-      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-    }
-
-    body.dark-mode #manualPricePanel h4 {
-      color: #ffc107 !important;
-    }
-
-    body.dark-mode #manualPricePanel label {
-      color: #ffc107 !important;
-    }
-
-    body.dark-mode #manualPrice {
-      background: linear-gradient(145deg, #2d3748 0%, #1a202c 100%);
-      border: 2px solid rgba(255, 193, 7, 0.3);
-      color: #e8eaed;
-    }
-
-    body.dark-mode #manualPrice:focus {
-      border-color: #ffc107;
-      box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.1);
-    }
 
     body.dark-mode #holdersInfo {
       color: #ffffff;
@@ -615,6 +596,31 @@
     .copy-notification.show {
       opacity: 1;
     }
+
+    /* تصميم رسالة الخطأ في أعلى الشاشة */
+    .error-notification {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #f44336;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 1000;
+      opacity: 0;
+      transition: all 0.3s ease;
+      max-width: 90%;
+      text-align: center;
+    }
+
+    .error-notification.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
   </style>
 </head>
 <body>
@@ -637,25 +643,6 @@
       </button>
     </div>
 
-    <!-- حقل إدخال السعر اليدوي -->
-    <div id="manualPricePanel" style="display: none; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-      <h4 style="margin: 0 0 12px 0; color: #856404; text-align: center; font-size: 16px; font-weight: 600;">
-        ⚠️ لم يتم العثور على السعر تلقائياً
-      </h4>
-      <div style="text-align: center;">
-        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #856404; font-size: 14px;">
-          أدخل سعر التوكن بعملة سولانا (SOL):
-        </label>
-        <div style="display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap;">
-          <input type="number" id="manualPrice" placeholder="مثال: 0.0004" step="0.000001" min="0" style="width: 150px; padding: 8px 12px; border: 1px solid #ffeaa7; border-radius: 6px; font-size: 14px; text-align: center;">
-          <button onclick="applyManualPrice()" style="background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">تطبيق السعر</button>
-          <button onclick="skipManualPrice()" style="background: #6c757d; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">تخطي</button>
-        </div>
-        <div style="font-size: 12px; color: #856404; margin-top: 8px;">
-          أمثلة: 0.0004 أو 0.00008 أو 0.001
-        </div>
-      </div>
-    </div>
 
     <!-- نافذة الإعدادات -->
     <div id="settingsPanel" style="display: none; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
@@ -772,6 +759,9 @@
 
   <!-- رسالة النسخ المنبثقة -->
   <div id="copyNotification" class="copy-notification">تم النسخ ✅</div>
+  
+  <!-- رسالة الخطأ في أعلى الشاشة -->
+  <div id="errorNotification" class="error-notification"></div>
 
 </body>
 
@@ -791,10 +781,6 @@
     let qualifiedWallets = 0;
     let unqualifiedWallets = 0;
     
-    // متغيرات السعر اليدوي
-    let manualPriceInSOL = null;
-    let waitingForManualPrice = false;
-    let currentMintForManualPrice = null;
     let failedWallets = 0;
     let pumpfunExcluded = 0;
     let accountsExcluded = 0;
@@ -868,24 +854,7 @@
           const data = JSON.parse(e.data);
 
           if (data.error) {
-            // التحقق من نوع الخطأ - فحص شامل لجميع رسائل فشل جلب السعر
-            const isPriceError = data.error.includes('لم يتم العثور على سعر التوكن') || 
-                                data.error.includes('Failed to get token price') ||
-                                data.error.includes('لم يتم العثور على سعر') ||
-                                data.error.includes('سعر التوكن') ||
-                                data.error.includes('token price') ||
-                                data.error.includes('DexScreener') ||
-                                data.error.includes('جميع المصادر');
-            
-            if (isPriceError) {
-              // إظهار نافذة إدخال السعر اليدوي
-              console.log('🚨 فشل جلب السعر - إظهار نافذة السعر اليدوي');
-              currentMintForManualPrice = document.getElementById('mint').value;
-              showManualPricePanel();
-              return;
-            }
-            
-            alert("خطأ: " + data.error);
+            showErrorNotification("خطأ: " + data.error);
             resetScanButton();
             currentEventSource.close();
             return;
@@ -1016,6 +985,12 @@
 
     function copy(text) {
       navigator.clipboard.writeText(text).then(() => {
+        // تحديث العداد المحلي عند النسخ
+        updateWalletOccurrence(text);
+        
+        // إعادة رسم الجدول لإظهار العداد المحدث
+        renderTable();
+        
         showCopyNotification();
       });
     }
@@ -1097,15 +1072,18 @@
     function renderTable() {
       const tbody = document.querySelector("#results tbody");
       tbody.innerHTML = "";
+      
+      // تحميل العدادات من localStorage
+      const occurrences = loadWalletOccurrences();
 
       allWalletData.forEach((wallet) => {
         const row = document.createElement("tr");
         // اختصار العنوان للهاتف المحمول
         const shortAddress = `${wallet.address.substring(0, 4)}..${wallet.address.substring(wallet.address.length - 3)}`;
         
-        // إضافة دائرة العداد للمحافظ المكررة في خانة منفصلة
-        const occurrenceCount = wallet.occurrenceCount || 1;
-        const badgeHtml = occurrenceCount > 1 ? `<span class="wallet-badge">${occurrenceCount}</span>` : '';
+        // إضافة دائرة العداد للمحافظ المكررة من localStorage
+        const occurrenceCount = occurrences[wallet.address] || 0;
+        const badgeHtml = occurrenceCount > 0 ? `<span class="wallet-badge">${occurrenceCount}</span>` : '';
         
         row.innerHTML = `
           <td title="${wallet.address}">${shortAddress}</td>
@@ -1251,195 +1229,63 @@
       });
     }
 
-    // دوال السعر اليدوي
-    function showManualPricePanel() {
-      document.getElementById('manualPricePanel').style.display = 'block';
-      document.getElementById('manualPrice').focus();
-      waitingForManualPrice = true;
+    // دالة لإظهار إشعار الخطأ في أعلى الشاشة
+    function showErrorNotification(message) {
+      const notification = document.getElementById('errorNotification');
+      notification.textContent = message;
+      notification.classList.add('show');
+      
+      // إخفاء الإشعار تلقائياً بعد ثانيتين
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 2000);
     }
 
-    function hideManualPricePanel() {
-      document.getElementById('manualPricePanel').style.display = 'none';
-      document.getElementById('manualPrice').value = '';
-      waitingForManualPrice = false;
-      manualPriceInSOL = null;
-    }
-
-    function applyManualPrice() {
-      const priceInput = document.getElementById('manualPrice').value;
-      const price = parseFloat(priceInput);
-      
-      if (isNaN(price) || price <= 0) {
-        alert('يرجى إدخال سعر صحيح أكبر من الصفر');
-        return;
-      }
-      
-      manualPriceInSOL = price;
-      hideManualPricePanel();
-      
-      // متابعة الفحص بالسعر اليدوي
-      if (currentMintForManualPrice) {
-        continueWithManualPrice(currentMintForManualPrice);
+    // إدارة عدادات المحافظ باستخدام localStorage
+    
+    // حفظ عدادات المحافظ في localStorage
+    function saveWalletOccurrences(occurrences) {
+      try {
+        localStorage.setItem('walletOccurrences', JSON.stringify(occurrences));
+      } catch (error) {
+        console.error('خطأ في حفظ عدادات المحافظ:', error);
       }
     }
 
-    function skipManualPrice() {
-      hideManualPricePanel();
-      alert('تم تخطي إدخال السعر. سيتم اعتبار سعر التوكن صفر.');
-      
-      manualPriceInSOL = 0;
-      if (currentMintForManualPrice) {
-        continueWithManualPrice(currentMintForManualPrice);
+    // تحميل عدادات المحافظ من localStorage
+    function loadWalletOccurrences() {
+      try {
+        const saved = localStorage.getItem('walletOccurrences');
+        return saved ? JSON.parse(saved) : {};
+      } catch (error) {
+        console.error('خطأ في تحميل عدادات المحافظ:', error);
+        return {};
       }
     }
 
-    function continueWithManualPrice(mint) {
-      // إعادة تعيين البيانات وبدء فحص جديد بالسعر اليدوي
-      totalReclaimableSOL = 0;
-      totalProcessedWallets = 0;
-      totalTokenAccounts = 0;
-      allWalletData = [];
-      sortDirection = {};
-
-      // إعادة تعيين الإحصائيات
-      totalScannedWallets = 0;
-      qualifiedWallets = 0;
-      unqualifiedWallets = 0;
-      pumpfunExcluded = 0;
-      accountsExcluded = 0;
-      highBalanceExcluded = 0;
-
-      document.querySelector("#results").style.display = "none";
-      document.querySelector("#results tbody").innerHTML = "";
-      document.getElementById("holdersInfo").style.display = "none";
-      document.getElementById("scanStats").style.display = "none";
-      document.getElementById("totalSummary").style.display = "none";
-      updateProgress(0, 1);
-
-      currentEventSource = new EventSourcePolyfill("/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          mint: mint,
-          minAccounts: minAccountsThreshold,
-          maxSolBalance: maxSolBalance,
-          serverSource: serverSource,
-          manualPriceSOL: manualPriceInSOL
-        }),
-      });
-
-      // نفس منطق معالجة الأحداث كما في startScan
-      currentEventSource.onmessage = function (e) {
-        try {
-          if (!e.data || e.data.trim() === '' || e.data === '{}' || e.data === 'null') {
-            return;
-          }
-
-          const data = JSON.parse(e.data);
-          
-          if (data.error) {
-            alert("خطأ: " + data.error);
-            resetScanButton();
-            currentEventSource.close();
-            return;
-          }
-
-          // باقي منطق معالجة البيانات...
-          // (نفس المنطق الموجود في currentEventSource.onmessage الأصلي)
-          if (data.totalHolders) {
-            document.getElementById("totalHolders").textContent = data.totalHolders;
-            document.getElementById("holdersInfo").style.display = "block";
-            document.getElementById("scanStats").style.display = "block";
-          }
-
-          if (data.tokenPrice !== undefined) {
-            document.getElementById("tokenPrice").textContent = data.tokenPrice.toFixed(8);
-          }
-
-          if (data.wallet) {
-            // معالجة بيانات المحفظة
-            const wallet = data.wallet;
-            if (wallet.unqualified) {
-              unqualifiedWallets++;
-            } else {
-              allWalletData.push(wallet);
-              totalReclaimableSOL += parseFloat(wallet.reclaimable);
-              totalProcessedWallets++;
-              totalTokenAccounts += wallet.accountsCount;
-              qualifiedWallets++;
-            }
-          }
-
-          if (data.progress) {
-            updateProgress(data.progress, data.total);
-            totalScannedWallets = data.progress;
-            
-            if (data.pumpfunExcluded !== undefined) pumpfunExcluded += data.pumpfunExcluded;
-            if (data.accountsExcluded !== undefined) accountsExcluded += data.accountsExcluded;
-            if (data.highBalanceExcluded !== undefined) highBalanceExcluded += data.highBalanceExcluded;
-            
-            document.getElementById("totalScanned").textContent = totalScannedWallets;
-            document.getElementById("qualifiedCount").textContent = qualifiedWallets;
-            document.getElementById("unqualifiedCount").textContent = unqualifiedWallets;
-            document.getElementById("pumpfunCount").textContent = pumpfunExcluded;
-            document.getElementById("accountsCount").textContent = accountsExcluded;
-            document.getElementById("highBalanceCount").textContent = highBalanceExcluded;
-          }
-
-          if (data.completed) {
-            console.log("تم إنهاء الفحص");
-            
-            // ترتيب النتائج حسب reclaimable بشكل تنازلي
-            allWalletData.sort((a, b) => parseFloat(b.reclaimable) - parseFloat(a.reclaimable));
-            
-            renderTable();
-            
-            if (allWalletData.length > 0) {
-              document.querySelector("#results").style.display = "table";
-              updateSummary();
-            }
-            
-            resetScanButton();
-            currentEventSource.close();
-          }
-
-        } catch (error) {
-          console.error("خطأ في تحليل البيانات:", error, "البيانات المستلمة:", e.data);
-        }
-      };
-
-      currentEventSource.onerror = function (e) {
-        console.error("خطأ في الاتصال:", e);
-        resetScanButton();
-      };
-
-      currentMintForManualPrice = null;
+    // تحديث عداد محفظة معينة
+    function updateWalletOccurrence(wallet) {
+      const occurrences = loadWalletOccurrences();
+      occurrences[wallet] = (occurrences[wallet] || 0) + 1;
+      saveWalletOccurrences(occurrences);
+      return occurrences[wallet];
     }
 
-    // إدارة عدادات المحافظ من خلال الخادم
-    async function resetWalletOccurrences() {
+    // إعادة تعيين جميع العدادات
+    function resetWalletOccurrences() {
       if (confirm('هل أنت متأكد من إعادة تعيين جميع عدادات المحافظ؟')) {
-        try {
-          await fetch('/api/wallet-occurrences', {
-            method: 'DELETE'
-          });
-          
-          // إعادة رسم الجدول لإخفاء العدادات
-          renderTable();
-          alert('تم إعادة تعيين عدادات المحافظ بنجاح');
-          
-          console.log('تم مسح جميع عدادات المحافظ');
-        } catch (error) {
-          console.error('خطأ في مسح العدادات:', error);
-          alert('حدث خطأ في مسح العدادات');
-        }
+        localStorage.removeItem('walletOccurrences');
+        // إعادة رسم الجدول لإخفاء العدادات
+        renderTable();
+        alert('تم إعادة تعيين عدادات المحافظ بنجاح');
+        console.log('تم مسح جميع عدادات المحافظ من localStorage');
       }
     }
 
     // تهيئة الإعدادات عند تحميل الصفحة
     document.addEventListener('DOMContentLoaded', function() {
       initializeTheme(); // تهيئة الوضع الليلي أولاً
-      // عدادات المحافظ تدار الآن من خلال الخادم
+      // عدادات المحافظ تدار الآن من خلال localStorage
       updateSettingsDisplay();
       updateActiveButtons();
       updateBalanceButtons();

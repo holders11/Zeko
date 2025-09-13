@@ -36,7 +36,6 @@ function getUserSession(req, res, next) {
     
     // إنشاء session جديد مع بيانات المحافظ
     userSessions.set(sessionId, {
-      walletOccurrences: new Map(), // عدادات المحافظ المكررة
       lastActivity: Date.now()
     });
     
@@ -359,14 +358,7 @@ async function getTokenAccounts(owner, mint, maxRetries = 3) {
 }
 
 // احصل على سعر التوكن بالدولار
-async function getTokenPrice(mint, serverSource = 'both', manualPriceSOL = null) {
-  // إذا تم توفير سعر يدوي بعملة SOL، استخدمه
-  if (manualPriceSOL !== null && manualPriceSOL !== undefined) {
-    const solPrice = await getSolPrice();
-    const priceInUSD = manualPriceSOL * solPrice;
-    console.log(`💎 استخدام السعر اليدوي: ${manualPriceSOL} SOL = $${priceInUSD} (سعر SOL: $${solPrice})`);
-    return priceInUSD;
-  }
+async function getTokenPrice(mint, serverSource = 'both') {
 
   try {
     if (serverSource === 'pumpfun') {
@@ -477,7 +469,7 @@ async function getPumpFunPrice(mint) {
 }
 
 // احصل على قائمة المحافظ المالكة للتوكن مع فلتر 10$ كحد أدنى
-async function getHolders(mint, manualPriceSOL = null) {
+async function getHolders(mint) {
   console.log(`🔍 بدء البحث عن حاملي التوكن: ${mint}`);
 
   // استخدام getProgramAccounts للحصول على جميع حسابات التوكن
@@ -517,7 +509,7 @@ async function getHolders(mint, manualPriceSOL = null) {
 
     // الحصول على سعر التوكن
     console.log("💰 جلب سعر التوكن...");
-    const tokenPrice = await getTokenPrice(mint, 'both', manualPriceSOL);
+    const tokenPrice = await getTokenPrice(mint, 'both');
     console.log(`💲 سعر التوكن: $${tokenPrice}`);
 
     const ownersWithBalance = new Map();
@@ -788,45 +780,12 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
   throw lastError; // رمي الخطأ بدلاً من إرجاع null
 }
 
-// API endpoints لإدارة بيانات المحافظ لكل session
-app.get("/api/wallet-occurrences", getUserSession, (req, res) => {
-  const occurrences = {};
-  for (const [wallet, count] of req.userSession.walletOccurrences.entries()) {
-    occurrences[wallet] = count;
-  }
-  res.json(occurrences);
-});
-
-app.post("/api/wallet-occurrences", getUserSession, (req, res) => {
-  const { wallet } = req.body;
-  if (!wallet) {
-    return res.status(400).json({ error: "عنوان المحفظة مطلوب" });
-  }
-  
-  const currentCount = req.userSession.walletOccurrences.get(wallet) || 0;
-  req.userSession.walletOccurrences.set(wallet, currentCount + 1);
-  
-  res.json({ 
-    wallet, 
-    count: currentCount + 1,
-    sessionId: req.sessionId.substring(0, 8) + "..."
-  });
-});
-
-app.delete("/api/wallet-occurrences", getUserSession, (req, res) => {
-  req.userSession.walletOccurrences.clear();
-  res.json({ message: "تم مسح جميع عدادات المحافظ لهذا المستخدم" });
-});
-
-// نقطة البدء
-app.post("/analyze", getUserSession, async (req, res) => {
-  const { mint, minAccounts = 0.05, serverSource = 'both', maxSolBalance = 10, manualPriceSOL = null } = req.body;
+// نقطة البدء - تم إزالة API endpoints الخاصة بالمحافظ المكررة (يتم التعامل معها في localStorage)
+app.post("/analyze", async (req, res) => {
+  const { mint, minAccounts = 0.05, serverSource = 'both', maxSolBalance = 10 } = req.body;
   console.log(`🚀 بدء تحليل التوكن: ${mint}`);
   console.log(`⚙️ إعدادات الفحص: الحد الأدنى ${minAccounts} حساب، الحد الأقصى للرصيد ${maxSolBalance} SOL`);
   console.log(`🌐 مصدر السعر: ${serverSource}`);
-  if (manualPriceSOL) {
-    console.log(`💸 سعر يدوي محدد: ${manualPriceSOL} SOL`);
-  }
 
   try {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -837,11 +796,11 @@ app.post("/analyze", getUserSession, async (req, res) => {
     console.log("💲 جلب سعر التوكن...");
     let tokenPrice;
     try {
-      tokenPrice = await getTokenPrice(mint, serverSource, manualPriceSOL);
+      tokenPrice = await getTokenPrice(mint, serverSource);
       console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
     } catch (priceError) {
       console.error("❌ فشل في جلب سعر التوكن:", priceError.message);
-      // إرسال رسالة خطأ للعميل لإظهار نافذة السعر اليدوي
+      // إرسال رسالة خطأ للعميل
       const errorData = { error: priceError.message };
       res.write(`data: ${JSON.stringify(errorData)}\n\n`);
       res.end();
@@ -853,7 +812,7 @@ app.post("/analyze", getUserSession, async (req, res) => {
     res.write(`data: ${JSON.stringify(tokenPriceData)}\n\n`);
 
     console.log("🔍 البحث عن حاملي التوكن...");
-    const walletOwners = await getHolders(mint, manualPriceSOL);
+    const walletOwners = await getHolders(mint);
     console.log(`👥 تم العثور على ${walletOwners.length} حامل للتوكن`);
 
     // إرسال عدد الحاملين الإجمالي أولاً
@@ -973,20 +932,9 @@ app.post("/analyze", getUserSession, async (req, res) => {
 
       // إرسال النتائج الجديدة إذا وجدت
       if (validResults.length > 0) {
-        // تحديث عدادات المحافظ لكل محفظة في النتائج الصالحة
-        const resultsWithOccurrences = validResults.map(wallet => {
-          const currentCount = req.userSession.walletOccurrences.get(wallet.address) || 0;
-          req.userSession.walletOccurrences.set(wallet.address, currentCount + 1);
-          
-          return {
-            ...wallet,
-            occurrenceCount: currentCount + 1
-          };
-        });
-        
         const batchData = { 
           batch: true, 
-          results: resultsWithOccurrences, 
+          results: validResults, 
           batchNumber: Math.floor(processed / CONCURRENT_BATCHES),
           totalBatches: batches.length
         };
@@ -1010,4 +958,4 @@ app.post("/analyze", getUserSession, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`✅ Running on http://localhost:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Running on http://0.0.0.0:${PORT}`));
