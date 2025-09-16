@@ -39,7 +39,6 @@ function getUserSession(req, res, next) {
       lastActivity: Date.now()
     });
     
-    console.log(`👤 مستخدم جديد - Session ID: ${sessionId.substring(0, 8)}...`);
   } else {
     // تحديث آخر نشاط
     userSessions.get(sessionId).lastActivity = Date.now();
@@ -63,19 +62,10 @@ setInterval(() => {
   }
   
   if (cleanedCount > 0) {
-    console.log(`🧹 تم تنظيف ${cleanedCount} session قديم`);
   }
 }, 24 * 60 * 60 * 1000); // يومياً
 
 // فحص متغيرات البيئة
-console.log("🔍 فحص متغيرات البيئة:");
-console.log("RPC_URL:", process.env.RPC_URL ? "✅ معرف" : "❌ غير معرف");
-console.log("RPC_URL2:", process.env.RPC_URL2 ? "✅ معرف" : "❌ غير معرف");
-console.log("RPC_URL3:", process.env.RPC_URL3 ? "✅ معرف" : "❌ غير معرف");
-console.log("RPC_URL4:", process.env.RPC_URL4 ? "✅ معرف" : "❌ غير معرف");
-console.log("BLANC_URL:", process.env.BLANC_URL ? "✅ معرف" : "❌ غير معرف");
-console.log("BLANC_URL2:", process.env.BLANC_URL2 ? "✅ معرف" : "❌ غير معرف");
-console.log("BLANC_URL3:", process.env.BLANC_URL3 ? "✅ معرف" : "❌ غير معرف");
 
 const RPC_URLS = [
   process.env.RPC_URL,
@@ -91,19 +81,7 @@ const BLANC_RPC_URLS = [
   process.env.BLANC_URL3
 ].filter(Boolean);
 
-console.log(`📊 عدد الروابط المحملة: ${RPC_URLS.length}`);
-console.log("🌐 الروابط المستخدمة:");
-RPC_URLS.forEach((url, index) => {
-  const maskedUrl = url ? url.substring(0, 30) + "..." : "غير محدد";
-  console.log(`  ${index + 1}. ${maskedUrl}`);
-});
 
-console.log(`🎭 عدد روابط BLANC المحملة: ${BLANC_RPC_URLS.length}`);
-console.log("🔍 روابط فحص المعاملات:");
-BLANC_RPC_URLS.forEach((url, index) => {
-  const maskedUrl = url ? url.substring(0, 30) + "..." : "غير محدد";
-  console.log(`  ${index + 1}. ${maskedUrl}`);
-});
 
 // التحقق من وجود روابط RPC صحيحة
 if (RPC_URLS.length === 0) {
@@ -151,7 +129,7 @@ function lamportsToSol(lamports) {
 }
 
 // دالة لإرسال طلب واحد إلى RPC محدد (محسّنة)
-async function sendSingleRpcRequest(rpcUrl, method, params, timeout = 30000) {
+async function sendSingleRpcRequest(rpcUrl, method, params, timeout = 30000, abortSignal = null) {
   if (!fetch) {
     const nodeFetch = await import('node-fetch');
     fetch = nodeFetch.default;
@@ -159,6 +137,15 @@ async function sendSingleRpcRequest(rpcUrl, method, params, timeout = 30000) {
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  // ربط إشارة الإلغاء الخارجية
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      controller.abort();
+    } else {
+      abortSignal.addEventListener('abort', () => controller.abort());
+    }
+  }
 
   try {
     const res = await fetch(rpcUrl, {
@@ -213,7 +200,7 @@ function getNextPumpFunRpc() {
 }
 
 // استعلام عبر RPC بالتوزيع الدائري الحقيقي (نسخة محسّنة)
-async function rpc(method, params, maxRetries = 3) {
+async function rpc(method, params, maxRetries = 3, abortSignal = null) {
   if (!RPC_URLS || RPC_URLS.length === 0) {
     throw new Error('❌ لا توجد روابط RPC متاحة!');
   }
@@ -224,8 +211,10 @@ async function rpc(method, params, maxRetries = 3) {
     const { rpcUrl, linkName } = getNextRpc();
     
     try {
-      console.log(`🎯 إرسال طلب #${requestCounter} للرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
-      console.log(`📡 استخدام الرابط: ${rpcUrl.substring(0, 40)}...`);
+      // فحص إشارة الإلغاء قبل البدء
+      if (abortSignal && abortSignal.aborted) {
+        throw new Error('العملية تم إلغاؤها');
+      }
       
       // إضافة تأخير بسيط لتجنب rate limiting إذا لم تكن المحاولة الأولى
       if (attempt > 1) {
@@ -235,8 +224,7 @@ async function rpc(method, params, maxRetries = 3) {
         await new Promise(resolve => setTimeout(resolve, totalDelay));
       }
       
-      const result = await sendSingleRpcRequest(rpcUrl, method, params);
-      console.log(`✅ نجح الرابط ${linkName} في الاستجابة`);
+      const result = await sendSingleRpcRequest(rpcUrl, method, params, 30000, abortSignal);
       
       return result;
       
@@ -250,7 +238,7 @@ async function rpc(method, params, maxRetries = 3) {
           ? Math.min(500 * attempt + Math.random() * 500, 2000)
           : Math.min(300 * attempt, 1500);
         
-        console.log(`⏳ انتظار ${Math.round(waitTime)}ms قبل المحاولة التالية...`);
+
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         console.error(`❌ فشل في جميع المحاولات لـ ${method}:`, error);
@@ -261,7 +249,7 @@ async function rpc(method, params, maxRetries = 3) {
 }
 
 // استعلام عبر روابط BLANC للمعاملات وفحص PumpFun (يستخدم التوزيع الدائري)
-async function pumpFunRpc(method, params, maxRetries = 3) {
+async function pumpFunRpc(method, params, maxRetries = 3, abortSignal = null) {
   if (!BLANC_RPC_URLS || BLANC_RPC_URLS.length === 0) {
     throw new Error('❌ لا توجد روابط BLANC متاحة!');
   }
@@ -272,8 +260,10 @@ async function pumpFunRpc(method, params, maxRetries = 3) {
     const { rpcUrl, linkName } = getNextPumpFunRpc();
     
     try {
-      console.log(`🎭 إرسال طلب PumpFun #${pumpFunRequestCounter} للرابط ${linkName} (محاولة ${attempt}/${maxRetries})`);
-      console.log(`🔍 استخدام رابط BLANC: ${rpcUrl.substring(0, 40)}...`);
+      // فحص إشارة الإلغاء قبل البدء
+      if (abortSignal && abortSignal.aborted) {
+        throw new Error('العملية تم إلغاؤها');
+      }
       
       // إضافة تأخير بسيط لتجنب rate limiting إذا لم تكن المحاولة الأولى
       if (attempt > 1) {
@@ -283,8 +273,7 @@ async function pumpFunRpc(method, params, maxRetries = 3) {
         await new Promise(resolve => setTimeout(resolve, totalDelay));
       }
       
-      const result = await sendSingleRpcRequest(rpcUrl, method, params);
-      console.log(`✅ نجح رابط BLANC ${linkName} في الاستجابة`);
+      const result = await sendSingleRpcRequest(rpcUrl, method, params, 30000, abortSignal);
       
       return result;
       
@@ -298,7 +287,7 @@ async function pumpFunRpc(method, params, maxRetries = 3) {
           ? Math.min(600 * attempt + Math.random() * 600, 2500)
           : Math.min(400 * attempt, 2000);
         
-        console.log(`⏳ انتظار ${Math.round(waitTime)}ms قبل المحاولة التالية...`);
+
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         console.error(`❌ فشل في جميع المحاولات لـ ${method} على روابط BLANC:`, error);
@@ -309,12 +298,12 @@ async function pumpFunRpc(method, params, maxRetries = 3) {
 }
 
 // احصل على رصيد محفظة SOL مع إعادة المحاولة (يستخدم التوزيع الدائري)
-async function getSolBalance(address, maxRetries = 3) {
+async function getSolBalance(address, maxRetries = 3, abortSignal = null) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const result = await rpc("getBalance", [address], 2);
+      const result = await rpc("getBalance", [address], 2, abortSignal);
       const lamports = result?.value || result || 0;
       return lamportsToSol(lamports);
     } catch (error) {
@@ -357,62 +346,37 @@ async function getTokenAccounts(owner, mint, maxRetries = 3) {
   throw lastError;
 }
 
-// احصل على سعر التوكن بالدولار
-async function getTokenPrice(mint, serverSource = 'both') {
+// احصل على سعر التوكن بالدولار من DexScreener مع 15 محاولة
+async function getTokenPrice(mint) {
+  const maxRetries = 15;
+  let lastError;
 
-  try {
-    if (serverSource === 'pumpfun') {
-      // استخدم PumpFun فقط
-      console.log("🚀 استخدام PumpFun فقط...");
-      return await getPumpFunPrice(mint);
-    }
-
-    if (serverSource === 'dexscreener') {
-      // استخدم DexScreener فقط
-      console.log("📊 استخدام DexScreener فقط...");
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
       const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const data = await response.json();
 
       if (data.pairs && data.pairs.length > 0) {
         const price = parseFloat(data.pairs[0].priceUsd) || 0;
-        console.log(`💰 سعر من DexScreener: $${price}`);
         return price;
       } else {
-        console.log("❌ لم يتم العثور على السعر في DexScreener");
-        throw new Error('لم يتم العثور على سعر التوكن في DexScreener');
+        throw new Error('لم يتم العثور على pairs في البيانات');
       }
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت:`, error.message);
+      
+      // لا تأخير بين المحاولات كما طلب المستخدم
     }
-
-    // الافتراضي: استخدم كلاهما (DexScreener أولاً ثم PumpFun)
-    console.log("🔄 استخدام كلا الخادمين...");
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-    const data = await response.json();
-
-    if (data.pairs && data.pairs.length > 0) {
-      const price = parseFloat(data.pairs[0].priceUsd) || 0;
-      console.log(`💰 سعر من DexScreener: $${price}`);
-      return price;
-    }
-
-    // إذا لم يجد في DexScreener، جرب PumpFun API
-    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة PumpFun...");
-    return await getPumpFunPrice(mint);
-
-  } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن:", error);
-
-    if (serverSource === 'both') {
-      // محاولة PumpFun كبديل إذا كان الإعداد "كلاهما"
-      try {
-        return await getPumpFunPrice(mint);
-      } catch (pumpError) {
-        console.error("خطأ في الحصول على سعر التوكن من PumpFun:", pumpError);
-        throw new Error('لم يتم العثور على سعر التوكن في جميع المصادر');
-      }
-    }
-
-    throw new Error('لم يتم العثور على سعر التوكن');
   }
+
+  console.error(`❌ فشل نهائي في جلب السعر بعد ${maxRetries} محاولة:`, lastError);
+  throw new Error(`لم يتم العثور على سعر التوكن في DexScreener بعد ${maxRetries} محاولة`);
 }
 
 // احصل على سعر SOL الحالي من CoinGecko
@@ -421,7 +385,6 @@ async function getSolPrice() {
     const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
     const data = await response.json();
     const solPrice = data.solana?.usd || 150; // fallback إلى 150 إذا فشل الطلب
-    console.log(`💎 سعر SOL الحالي: $${solPrice}`);
     return solPrice;
   } catch (error) {
     console.warn("⚠️ فشل في جلب سعر SOL من CoinGecko، استخدام السعر الافتراضي:", error.message);
@@ -429,54 +392,14 @@ async function getSolPrice() {
   }
 }
 
-// احصل على سعر التوكن من PumpFun
-async function getPumpFunPrice(mint) {
-  try {
-    console.log(`🚀 البحث عن سعر التوكن ${mint} في PumpFun...`);
-
-    // استخدام REST API بدلاً من WebSocket للبساطة
-    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    if (data && data.usd_market_cap && data.total_supply) {
-      // حساب السعر من market cap و total supply
-      const price = data.usd_market_cap / data.total_supply;
-      console.log(`💰 سعر من PumpFun (market cap): $${price}`);
-      return price;
-    }
-
-    // إذا لم توجد البيانات المطلوبة، جرب من خلال virtual_sol_reserves
-    if (data && data.virtual_sol_reserves && data.virtual_token_reserves) {
-      // جلب سعر SOL الحقيقي من CoinGecko
-      const solPrice = await getSolPrice();
-      const price = (data.virtual_sol_reserves * solPrice) / data.virtual_token_reserves;
-      console.log(`💰 سعر محسوب من reserves في PumpFun: $${price} (سعر SOL: $${solPrice})`);
-      return price;
-    }
-
-    console.log("⚠️ لم يتم العثور على بيانات السعر في PumpFun");
-    throw new Error('لم يتم العثور على بيانات السعر في PumpFun');
-
-  } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن من PumpFun:", error);
-    throw error;
-  }
-}
 
 // احصل على قائمة المحافظ المالكة للتوكن مع فلتر 10$ كحد أدنى
 async function getHolders(mint) {
-  console.log(`🔍 بدء البحث عن حاملي التوكن: ${mint}`);
 
   // استخدام getProgramAccounts للحصول على جميع حسابات التوكن
   const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
   try {
-    console.log("📡 إرسال طلب getProgramAccounts...");
     const accounts = await rpc("getProgramAccounts", [
       TOKEN_PROGRAM_ID,
       {
@@ -495,12 +418,6 @@ async function getHolders(mint) {
       },
     ]);
 
-    console.log("📊 استجابة getProgramAccounts:", {
-      type: typeof accounts,
-      isArray: Array.isArray(accounts),
-      length: accounts?.length || 0,
-      sample: accounts?.[0] || null
-    });
 
     if (!accounts || !Array.isArray(accounts)) {
       console.error("❌ فشل في الحصول على حسابات التوكن:", accounts);
@@ -508,9 +425,7 @@ async function getHolders(mint) {
     }
 
     // الحصول على سعر التوكن
-    console.log("💰 جلب سعر التوكن...");
     const tokenPrice = await getTokenPrice(mint, 'both');
-    console.log(`💲 سعر التوكن: $${tokenPrice}`);
 
     const ownersWithBalance = new Map();
     let processedAccounts = 0;
@@ -518,7 +433,6 @@ async function getHolders(mint) {
     let qualifiedHolders = 0;
     let excludedPlatforms = 0;
 
-    console.log(`🔄 معالجة ${accounts.length} حساب...`);
 
     for (let acc of accounts) {
       processedAccounts++;
@@ -551,13 +465,6 @@ async function getHolders(mint) {
       }
     }
 
-    console.log(`✅ انتهاء المعالجة:`, {
-      processedAccounts,
-      validAccounts,
-      qualifiedHolders,
-      excludedPlatforms,
-      uniqueHolders: ownersWithBalance.size
-    });
 
     return Array.from(ownersWithBalance.keys());
 
@@ -574,7 +481,7 @@ async function getOwnerOfTokenAccount(accountPubkey) {
 }
 
 // فحص ما إذا كان للمحفظة نشاط في Pump.fun (يستخدم التوزيع الدائري)
-async function hasPumpFunActivity(owner, maxRetries = 3) {
+async function hasPumpFunActivity(owner, maxRetries = 3, abortSignal = null) {
   const PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
   const VALID_OPERATION_TYPES = ['create', 'buy', 'sell'];
   
@@ -582,17 +489,14 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`🔍 فحص نشاط Pump.fun للمحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
       
       // جلب آخر 20 معاملة للمحفظة باستخدام روابط BLANC
-      const signatures = await pumpFunRpc("getSignaturesForAddress", [owner, { limit: 20 }], 2);
+      const signatures = await pumpFunRpc("getSignaturesForAddress", [owner, { limit: 20 }], 2, abortSignal);
       
       if (!signatures || signatures.length === 0) {
-        console.log(`⏭️ لا توجد معاملات للمحفظة ${owner}`);
         return false;
       }
       
-      console.log(`📜 تم العثور على ${signatures.length} معاملة، فحص التفاصيل...`);
       
       // فحص كل معاملة للبحث عن برنامج Pump.fun
       for (let i = 0; i < signatures.length; i++) {
@@ -600,7 +504,7 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
           const signature = signatures[i].signature;
           
           // جلب تفاصيل المعاملة باستخدام روابط BLANC
-          const transaction = await pumpFunRpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2);
+          const transaction = await pumpFunRpc("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], 2, abortSignal);
           
           if (transaction && transaction.transaction && transaction.transaction.message && transaction.transaction.message.instructions) {
             const instructions = transaction.transaction.message.instructions;
@@ -614,19 +518,15 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
                   const operationType = instruction.parsed.type.toLowerCase();
                   
                   if (VALID_OPERATION_TYPES.includes(operationType)) {
-                    console.log(`✅ تم العثور على عملية Pump.fun صحيحة (${operationType}) في المعاملة ${signature} للمحفظة ${owner}`);
                     return true;
                   }
                 }
                 
                 // في حالة عدم وجود parsed data، قد تكون العملية مشفرة
                 // نفحص ما إذا كان البرنامج صحيح على الأقل
-                console.log(`🔍 تم العثور على تعليمة Pump.fun في المعاملة ${signature} للمحفظة ${owner} لكن بدون parsed data`);
-                
                 // يمكن أن نقبل العملية إذا كان البرنامج صحيح حتى لو لم نستطع تحليل النوع
                 // أو يمكن أن نكون أكثر صرامة ونرفضها
                 // للأمان، سنقبلها إذا كان البرنامج صحيح
-                console.log(`✅ تم قبول عملية Pump.fun غير محللة في المعاملة ${signature} للمحفظة ${owner}`);
                 return true;
               }
             }
@@ -638,7 +538,6 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
         }
       }
       
-      console.log(`❌ لم يتم العثور على عمليات Pump.fun صحيحة في آخر ${signatures.length} معاملة للمحفظة ${owner}`);
       return false;
       
     } catch (error) {
@@ -658,12 +557,15 @@ async function hasPumpFunActivity(owner, maxRetries = 3) {
 }
 
 // تحليل محفظة واحدة مع إعادة المحاولة الشاملة (يستخدم التوزيع الدائري)
-async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAccounts = 0.05, maxSolBalance = 10) {
+async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAccounts = 0.05, maxSolBalance = 10, abortSignal = null) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`🔍 تحليل المحفظة ${owner} - محاولة ${attempt}/${maxRetries}`);
+      // فحص إشارة الإلغاء
+      if (abortSignal && abortSignal.aborted) {
+        throw new Error('العملية تم إلغاؤها');
+      }
 
       // جلب جميع البيانات المطلوبة باستخدام التوزيع الدائري
       let allTokenAccountsResult, specificTokenAccountsResult, solBalance;
@@ -675,9 +577,9 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
             owner,
             { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
             { encoding: "jsonParsed" }
-          ], 2),
-          getTokenAccounts(owner, mint, 2),
-          getSolBalance(owner, 2)
+          ], 2, abortSignal),
+          getTokenAccounts(owner, mint, 2, abortSignal),
+          getSolBalance(owner, 2, abortSignal)
         ]);
       } catch (parallelError) {
         // إذا فشل الطلب المتوازي، جرب بشكل تسلسلي
@@ -686,15 +588,14 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
           owner,
           { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
           { encoding: "jsonParsed" }
-        ], 2);
+        ], 2, abortSignal);
 
-        specificTokenAccountsResult = await getTokenAccounts(owner, mint, 2);
-        solBalance = await getSolBalance(owner, 2);
+        specificTokenAccountsResult = await getTokenAccounts(owner, mint, 2, abortSignal);
+        solBalance = await getSolBalance(owner, 2, abortSignal);
       }
 
       // فحص الحد الأقصى للرصيد أولاً
       if (solBalance > maxSolBalance) {
-        console.log(`⚠️ المحفظة ${owner} لديها رصيد ${solBalance} SOL (أكبر من الحد الأقصى ${maxSolBalance}) - تم استبعادها`);
         return { unqualified: true, address: owner, reason: 'high_balance', solBalance: solBalance.toFixed(3) };
       }
 
@@ -703,7 +604,6 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
       // فحص سريع - إذا كان عدد الحسابات أقل من الحد المحدد، لا تكمل
       const minAccountsThreshold = minAccounts * 1000; // تحويل من SOL إلى عدد الحسابات التقريبي
       if (allAccounts.length < minAccountsThreshold) {
-        console.log(`⏭️ المحفظة ${owner} لديها ${allAccounts.length} حساب فقط (أقل من ${minAccountsThreshold}) - تخطي`);
         return null;
       }
 
@@ -761,7 +661,6 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
         tokenValue: tokenValueUSD.toFixed(2),
       };
 
-      console.log(`✅ نجح تحليل المحفظة ${owner} - محاولة ${attempt}`);
       return result;
 
     } catch (error) {
@@ -782,22 +681,31 @@ async function analyzeWallet(owner, mint, tokenPrice = 0, maxRetries = 3, minAcc
 
 // نقطة البدء - تم إزالة API endpoints الخاصة بالمحافظ المكررة (يتم التعامل معها في localStorage)
 app.post("/analyze", async (req, res) => {
-  const { mint, minAccounts = 0.05, serverSource = 'both', maxSolBalance = 10 } = req.body;
-  console.log(`🚀 بدء تحليل التوكن: ${mint}`);
-  console.log(`⚙️ إعدادات الفحص: الحد الأدنى ${minAccounts} حساب، الحد الأقصى للرصيد ${maxSolBalance} SOL`);
-  console.log(`🌐 مصدر السعر: ${serverSource}`);
-
+  const { mint, minAccounts = 0.05, maxSolBalance = 10 } = req.body;
+  
+  // إنشاء AbortController لإدارة إيقاف العملية
+  const abortController = new AbortController();
+  
+  // مراقبة انقطاع الاتصال من العميل
+  req.on('close', () => {
+    abortController.abort();
+  });
+  
+  req.on('end', () => {
+    if (!res.finished) {
+      abortController.abort();
+    }
+  });
+  
   try {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
     // الحصول على سعر التوكن أولاً
-    console.log("💲 جلب سعر التوكن...");
     let tokenPrice;
     try {
-      tokenPrice = await getTokenPrice(mint, serverSource);
-      console.log(`💰 سعر التوكن المستلم: $${tokenPrice}`);
+      tokenPrice = await getTokenPrice(mint);
     } catch (priceError) {
       console.error("❌ فشل في جلب سعر التوكن:", priceError.message);
       // إرسال رسالة خطأ للعميل
@@ -808,21 +716,16 @@ app.post("/analyze", async (req, res) => {
     }
 
     const tokenPriceData = { tokenPrice: tokenPrice };
-    console.log("📤 إرسال سعر التوكن:", tokenPriceData);
     res.write(`data: ${JSON.stringify(tokenPriceData)}\n\n`);
 
-    console.log("🔍 البحث عن حاملي التوكن...");
     const walletOwners = await getHolders(mint);
-    console.log(`👥 تم العثور على ${walletOwners.length} حامل للتوكن`);
 
     // إرسال عدد الحاملين الإجمالي أولاً
     const holdersData = { totalHolders: walletOwners.length };
-    console.log("📤 إرسال عدد الحاملين:", holdersData);
     res.write(`data: ${JSON.stringify(holdersData)}\n\n`);
 
     if (walletOwners.length === 0) {
       const errorData = { error: "لم يتم العثور على محافظ تحمل التوكن بقيمة 10$ أو أكثر" };
-      console.log("❌ لا توجد محافظ مؤهلة");
       res.write(`data: ${JSON.stringify(errorData)}\n\n`);
       res.end();
       return;
@@ -835,8 +738,6 @@ app.post("/analyze", async (req, res) => {
     // معالجة المحافظ بالتوزيع الدائري الحقيقي - كل محفظة تذهب لـ RPC مختلف
     const CONCURRENT_BATCHES = 20; // معالجة 20 محفظة في نفس الوقت
 
-    console.log(`🔄 بدء معالجة ${walletOwners.length} محفظة بالتوزيع الدائري الحقيقي...`);
-    console.log(`🎯 توزيع: كل محفظة تذهب لـ RPC مختلف، معالجة ${CONCURRENT_BATCHES} محفظة بالتوازي`);
     const batches = [];
 
     for (let i = 0; i < walletOwners.length; i += CONCURRENT_BATCHES) {
@@ -844,9 +745,8 @@ app.post("/analyze", async (req, res) => {
     }
 
     for (const batch of batches) {
-      // التحقق من حالة الاتصال قبل معالجة كل مجموعة
-      if (res.destroyed || res.writableEnded) {
-        console.log("🛑 تم قطع الاتصال - توقيف المعالجة");
+      // التحقق من حالة الاتصال وإشارة الإلغاء قبل معالجة كل مجموعة
+      if (res.destroyed || res.writableEnded || abortController.signal.aborted) {
         return;
       }
 
@@ -866,7 +766,12 @@ app.post("/analyze", async (req, res) => {
             console.log(`📝 معالجة المحفظة: ${owner} ${retries > 0 ? `(إعادة محاولة ${retries})` : ''}`);
             
             // أولاً، فحص ما إذا كان للمحفظة نشاط في Pump.fun باستخدام التوزيع الدائري
-            const hasPumpFun = await hasPumpFunActivity(owner, 2);
+            // فحص إشارة الإلغاء قبل معالجة المحفظة
+            if (abortController.signal.aborted) {
+              return;
+            }
+            
+            const hasPumpFun = await hasPumpFunActivity(owner, 2, abortController.signal);
             
             if (!hasPumpFun) {
               console.log(`❌ المحفظة ${owner} لا تحتوي على نشاط Pump.fun - تم تخطيها`);
@@ -874,7 +779,7 @@ app.post("/analyze", async (req, res) => {
             }
             
             console.log(`✅ المحفظة ${owner} تحتوي على نشاط Pump.fun - متابعة التحليل`);
-            const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts, maxSolBalance);
+            const data = await analyzeWallet(owner, mint, tokenPrice, 2, minAccounts, maxSolBalance, abortController.signal);
 
             if (data) {
               console.log(`✅ محفظة مؤهلة: ${data.address} - يمكن استرداد ${data.reclaimable} SOL`);
@@ -927,7 +832,6 @@ app.post("/analyze", async (req, res) => {
         accountsExcluded: accountsExcluded,
         highBalanceExcluded: highBalanceExcluded
       };
-      console.log(`📊 التقدم: ${processed}/${walletOwners.length} (${Math.round(processed/walletOwners.length*100)}%) - مؤهل: ${qualifiedResults} - مستبعد بسبب Pump.fun: ${pumpfunExcluded} - مستبعد بسبب الحسابات: ${accountsExcluded} - مستبعد بسبب الرصيد العالي: ${highBalanceExcluded}`);
       res.write(`data: ${JSON.stringify(progressData)}\n\n`);
 
       // إرسال النتائج الجديدة إذا وجدت
@@ -942,13 +846,10 @@ app.post("/analyze", async (req, res) => {
       }
     }
 
-    console.log(`🎯 انتهاء المعالجة - النتائج المؤهلة: ${results.length}/${walletOwners.length}`);
 
     const finalData = { done: true, totalResults: results.length };
-    console.log("📤 إرسال إشارة الانتهاء");
     res.write(`data: ${JSON.stringify(finalData)}\n\n`);
     res.end();
-    console.log("✅ تم إنهاء الطلب بنجاح");
 
   } catch (err) {
     console.error("❌ خطأ عام في /analyze:", err);
