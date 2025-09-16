@@ -638,6 +638,9 @@
       <button id="settingsButton" onclick="toggleSettings()">
         <span class="settings-icon">⚙️</span>
       </button>
+      <button id="serverButton" onclick="toggleServerSettings()">
+        <span class="server-icon">🌐</span>
+      </button>
     </div>
 
 
@@ -686,6 +689,30 @@
       </div>
     </div>
 
+    <!-- نافذة إعدادات الخادم -->
+    <div id="serverPanel" style="display: none; background: #f0f8ff; border: 1px solid #b8daff; border-radius: 10px; padding: 15px; margin: 15px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+      <h4 style="margin: 0 0 12px 0; color: #004085; text-align: center; font-size: 16px; font-weight: 600;">
+        🌐 إعدادات الخادم
+      </h4>
+
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #004085; font-size: 14px;">
+          مصدر السعر:
+        </label>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 10px;">
+          <button onclick="setServerSource('both')" class="preset-btn-small server-btn" data-source="both">كلاهما</button>
+          <button onclick="setServerSource('dexscreener')" class="preset-btn-small server-btn" data-source="dexscreener">DexScreener فقط</button>
+          <button onclick="setServerSource('pumpfun')" class="preset-btn-small server-btn" data-source="pumpfun">PumpFun فقط (افتراضي)</button>
+        </div>
+      </div>
+
+      <div style="text-align: center; padding: 10px; background: #d1ecf1; border-radius: 8px; border: 1px solid #bee5eb;">
+        <div style="font-size: 13px; color: #0c5460; margin-bottom: 4px;">الخادم الحالي</div>
+        <div style="font-size: 14px; color: #0c5460; font-weight: 600;">
+          <span id="currentServerSource">PumpFun فقط</span>
+        </div>
+      </div>
+    </div>
 
     <div id="progressBar"><div>0%</div></div>
 
@@ -695,7 +722,9 @@
       <div id="scanStats" style="font-size: 14px; color: #666; margin-top: 10px; display: none;">
         الإجمالي: <span id="totalScanned" style="color: #333;">0</span> | 
         المؤهل: <span id="qualifiedCount" style="color: #4CAF50; font-weight: bold;">0</span> | 
-        غير مؤهل: <span id="accountsCount" style="color: #ff9800;">0</span> | 
+غير مؤهل: <span id="unqualifiedCount" style="color: #ff9800;">0</span> | 
+        مستبعد Pump.fun: <span id="pumpfunCount" style="color: #9c27b0;">0</span> | 
+        قليل الحسابات: <span id="accountsCount" style="color: #607d8b;">0</span> | 
         رصيد عالي: <span id="highBalanceCount" style="color: #ff5722;">0</span> | 
         فاشل: <span id="failedCount" style="color: #f44336;">0</span>
       </div>
@@ -760,6 +789,7 @@
     // إعدادات الفحص
     let minAccountsThreshold = 0.05; // الحد الأدنى للحاملين 0.05 SOL rent
     let maxSolBalance = 10; // الحد الأقصى للرصيد (SOL)
+    let serverSource = 'both'; // both, dexscreener, pumpfun
     let isDarkMode = true; // الوضع الليلي افتراضي
 
     function toggleScan() {
@@ -809,7 +839,8 @@
         body: JSON.stringify({ 
           mint: mint,
           minAccounts: minAccountsThreshold,
-          maxSolBalance: maxSolBalance
+          maxSolBalance: maxSolBalance,
+          serverSource: serverSource
         }),
       });
 
@@ -915,6 +946,7 @@
         currentEventSource = null;
       }
       resetScanButton();
+      alert("تم إيقاف عملية الفحص");
     }
 
     function resetScanButton() {
@@ -941,11 +973,12 @@
       document.getElementById("totalScanned").textContent = totalScannedWallets;
       document.getElementById("qualifiedCount").textContent = qualifiedWallets;
       document.getElementById("unqualifiedCount").textContent = unqualifiedWallets;
+      document.getElementById("pumpfunCount").textContent = pumpfunExcluded;
       document.getElementById("accountsCount").textContent = accountsExcluded;
       document.getElementById("highBalanceCount").textContent = highBalanceExcluded;
       
       // الفاشل = الإجمالي - المؤهل - غير المؤهل - المستبعد
-      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets - accountsExcluded - highBalanceExcluded;
+      failedWallets = totalScannedWallets - qualifiedWallets - unqualifiedWallets - pumpfunExcluded - accountsExcluded - highBalanceExcluded;
       if (failedWallets < 0) failedWallets = 0; // تجنب القيم السالبة
       document.getElementById("failedCount").textContent = failedWallets;
     }
@@ -1068,8 +1101,16 @@
     function toggleSettings() {
       const panel = document.getElementById('settingsPanel');
       panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      // إغلاق نافذة الخادم إذا كانت مفتوحة
+      document.getElementById('serverPanel').style.display = 'none';
     }
 
+    function toggleServerSettings() {
+      const panel = document.getElementById('serverPanel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      // إغلاق نافذة الإعدادات إذا كانت مفتوحة
+      document.getElementById('settingsPanel').style.display = 'none';
+    }
 
     function setMinAccounts(value) {
       minAccountsThreshold = value;
@@ -1107,12 +1148,26 @@
       }
     }
 
+    function setServerSource(source) {
+      serverSource = source;
+      updateServerDisplay();
+      updateServerButtons();
+      toggleServerSettings(); // إغلاق نافذة إعدادات الخادم
+    }
 
     function updateSettingsDisplay() {
       document.getElementById('currentMinAccounts').textContent = minAccountsThreshold;
       document.getElementById('currentMaxBalance').textContent = maxSolBalance;
     }
 
+    function updateServerDisplay() {
+      const sourceText = {
+        'both': 'كلاهما (DexScreener → PumpFun)',
+        'dexscreener': 'DexScreener فقط',
+        'pumpfun': 'PumpFun فقط'
+      };
+      document.getElementById('currentServerSource').textContent = sourceText[serverSource];
+    }
 
     function toggleDarkMode() {
       isDarkMode = !isDarkMode;
@@ -1152,6 +1207,16 @@
       });
     }
 
+    function updateServerButtons() {
+      // تحديث أزرار الخادم
+      document.querySelectorAll('.server-btn[data-source]').forEach(btn => {
+        if (btn.dataset.source === serverSource) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
 
     function updateBalanceButtons() {
       // تحديث أزرار الرصيد
@@ -1224,6 +1289,8 @@
       updateSettingsDisplay();
       updateActiveButtons();
       updateBalanceButtons();
+      updateServerDisplay();
+      updateServerButtons();
     });
 
     // دالة الترتيب
