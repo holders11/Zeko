@@ -357,8 +357,9 @@ async function getTokenAccounts(owner, mint, maxRetries = 3) {
   throw lastError;
 }
 
-// احصل على سعر التوكن بالدولار
+// احصل على سعر التوكن بالدولار - نسخة محسنة ومعالجة للأخطاء
 async function getTokenPrice(mint, serverSource = 'both') {
+  console.log(`💰 محاولة جلب سعر التوكن: ${mint}`);
 
   try {
     if (serverSource === 'pumpfun') {
@@ -370,48 +371,83 @@ async function getTokenPrice(mint, serverSource = 'both') {
     if (serverSource === 'dexscreener') {
       // استخدم DexScreener فقط
       console.log("📊 استخدام DexScreener فقط...");
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-      const data = await response.json();
-
-      if (data.pairs && data.pairs.length > 0) {
-        const price = parseFloat(data.pairs[0].priceUsd) || 0;
-        console.log(`💰 سعر من DexScreener: $${price}`);
-        return price;
-      } else {
-        console.log("❌ لم يتم العثور على السعر في DexScreener");
-        throw new Error('لم يتم العثور على سعر التوكن في DexScreener');
-      }
+      return await getDexScreenerPrice(mint);
     }
 
     // الافتراضي: استخدم كلاهما (DexScreener أولاً ثم PumpFun)
     console.log("🔄 استخدام كلا الخادمين...");
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-    const data = await response.json();
-
-    if (data.pairs && data.pairs.length > 0) {
-      const price = parseFloat(data.pairs[0].priceUsd) || 0;
-      console.log(`💰 سعر من DexScreener: $${price}`);
-      return price;
-    }
-
-    // إذا لم يجد في DexScreener، جرب PumpFun API
-    console.log("🔍 لم يتم العثور على السعر في DexScreener، محاولة PumpFun...");
-    return await getPumpFunPrice(mint);
-
-  } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن:", error);
-
-    if (serverSource === 'both') {
-      // محاولة PumpFun كبديل إذا كان الإعداد "كلاهما"
+    
+    try {
+      const dexscreenerPrice = await getDexScreenerPrice(mint);
+      return dexscreenerPrice;
+    } catch (dexscreenerError) {
+      console.warn("⚠️ فشل في الحصول على السعر من DexScreener، محاولة PumpFun...", dexscreenerError.message);
+      
+      // إذا لم يجد في DexScreener، جرب PumpFun API
       try {
-        return await getPumpFunPrice(mint);
-      } catch (pumpError) {
-        console.error("خطأ في الحصول على سعر التوكن من PumpFun:", pumpError);
+        const pumpfunPrice = await getPumpFunPrice(mint);
+        return pumpfunPrice;
+      } catch (pumpfunError) {
+        console.error("❌ فشل في الحصول على السعر من PumpFun:", pumpfunError.message);
         throw new Error('لم يتم العثور على سعر التوكن في جميع المصادر');
       }
     }
 
-    throw new Error('لم يتم العثور على سعر التوكن');
+  } catch (error) {
+    console.error("❌ خطأ في الحصول على سعر التوكن:", error.message);
+    throw error;
+  }
+}
+
+// دالة منفصلة للحصول على السعر من DexScreener
+async function getDexScreenerPrice(mint) {
+  console.log(`📊 جلب السعر من DexScreener للتوكن: ${mint}`);
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 ثانية timeout
+
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // التحقق من نوع المحتوى قبل التحويل إلى JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error(`رد غير متوقع من DexScreener: ${contentType}`);
+    }
+
+    const data = await response.json();
+
+    if (data.pairs && data.pairs.length > 0) {
+      // البحث عن أفضل زوج (أعلى سيولة)
+      const bestPair = data.pairs.reduce((best, current) => {
+        const currentLiquidity = parseFloat(current.liquidity?.usd || 0);
+        const bestLiquidity = parseFloat(best.liquidity?.usd || 0);
+        return currentLiquidity > bestLiquidity ? current : best;
+      }, data.pairs[0]);
+
+      const price = parseFloat(bestPair.priceUsd) || 0;
+      console.log(`💰 سعر من DexScreener: $${price} (زوج: ${bestPair.baseToken.symbol}/${bestPair.quoteToken.symbol})`);
+      
+      if (price > 0) {
+        return price;
+      } else {
+        throw new Error('سعر التوكن صفر في DexScreener');
+      }
+    } else {
+      throw new Error('لم يتم العثور على أزواج تداول للتوكن في DexScreener');
+    }
+
+  } catch (error) {
+    console.error(`❌ خطأ في الحصول على السعر من DexScreener:`, error.message);
+    throw error;
   }
 }
 
@@ -429,43 +465,99 @@ async function getSolPrice() {
   }
 }
 
-// احصل على سعر التوكن من PumpFun
+// دالة منفصلة للحصول على السعر من PumpFun - نسخة محسنة
 async function getPumpFunPrice(mint) {
-  try {
-    console.log(`🚀 البحث عن سعر التوكن ${mint} في PumpFun...`);
+  console.log(`🚀 جلب السعر من PumpFun للتوكن: ${mint}`);
 
-    // استخدام REST API بدلاً من WebSocket للبساطة
-    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`);
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 ثانية timeout
+
+    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
+      // معالجة خاصة لخطأ 530
+      if (response.status === 530) {
+        throw new Error('خادم PumpFun غير متاح حاليًا (خطأ 530)');
+      }
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // التحقق من نوع المحتوى
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error(`رد غير متوقع من PumpFun: ${contentType}`);
     }
 
     const data = await response.json();
 
-    if (data && data.usd_market_cap && data.total_supply) {
-      // حساب السعر من market cap و total supply
-      const price = data.usd_market_cap / data.total_supply;
-      console.log(`💰 سعر من PumpFun (market cap): $${price}`);
-      return price;
-    }
+    // طرق متعددة لحساب السعر من PumpFun
+    let price = 0;
 
-    // إذا لم توجد البيانات المطلوبة، جرب من خلال virtual_sol_reserves
-    if (data && data.virtual_sol_reserves && data.virtual_token_reserves) {
-      // جلب سعر SOL الحقيقي من CoinGecko
+    if (data && data.price) {
+      // الطريقة الأولى: استخدام price مباشرة إذا متوفر
+      price = parseFloat(data.price);
+      console.log(`💰 سعر مباشر من PumpFun: $${price}`);
+    } else if (data && data.usd_market_cap && data.total_supply) {
+      // الطريقة الثانية: حساب السعر من market cap و total supply
+      price = data.usd_market_cap / data.total_supply;
+      console.log(`💰 سعر محسوب من market cap في PumpFun: $${price}`);
+    } else if (data && data.virtual_sol_reserves && data.virtual_token_reserves) {
+      // الطريقة الثالثة: حساب السعر من reserves
       const solPrice = await getSolPrice();
-      const price = (data.virtual_sol_reserves * solPrice) / data.virtual_token_reserves;
+      price = (data.virtual_sol_reserves * solPrice) / data.virtual_token_reserves;
       console.log(`💰 سعر محسوب من reserves في PumpFun: $${price} (سعر SOL: $${solPrice})`);
-      return price;
+    } else {
+      throw new Error('بيانات السعر غير كافية في استجابة PumpFun');
     }
 
-    console.log("⚠️ لم يتم العثور على بيانات السعر في PumpFun");
-    throw new Error('لم يتم العثور على بيانات السعر في PumpFun');
+    if (price > 0) {
+      return price;
+    } else {
+      throw new Error('سعر التوكن صفر في PumpFun');
+    }
 
   } catch (error) {
-    console.error("خطأ في الحصول على سعر التوكن من PumpFun:", error);
+    console.error(`❌ خطأ في الحصول على السعر من PumpFun:`, error.message);
     throw error;
   }
+}
+
+// دالة احتياطية للحصول على السعر
+async function getFallbackPrice(mint) {
+  console.log(`🔄 استخدام طريقة احتياطية للحصول على سعر التوكن: ${mint}`);
+  
+  // محاولة Birdeye كبديل
+  try {
+    const response = await fetch(`https://public-api.birdeye.so/public/price?address=${mint}`, {
+      headers: {
+        'X-API-KEY': '', // يمكنك إضافة API key إذا كان لديك
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.data && data.data.value) {
+        const price = parseFloat(data.data.value);
+        console.log(`💰 سعر من Birdeye: $${price}`);
+        return price;
+      }
+    }
+  } catch (error) {
+    console.warn(`⚠️ فشل في الحصول على السعر من Birdeye:`, error.message);
+  }
+
+  // إذا فشلت جميع المحاولات، استخدم سعر افتراضي بناءً على اسم التوكن
+  console.log(`⚠️ استخدام سعر افتراضي للتوكن: ${mint}`);
+  return 0.01; // سعر افتراضي منخفض
 }
 
 // احصل على قائمة المحافظ المالكة للتوكن مع فلتر 10$ كحد أدنى
