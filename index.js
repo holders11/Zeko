@@ -1,7 +1,9 @@
 const express = require("express");
 const path = require("path");
 const cookieParser = require("cookie-parser");
+const compression = require("compression");
 const { v4: uuidv4 } = require("uuid");
+const { PublicKey } = require("@solana/web3.js");
 
 // استيراد fetch ديناميكياً
 let fetch;
@@ -13,10 +15,31 @@ let fetch;
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ضغط الاستجابات لتخفيف استهلاك الموارد (تعطيل للـ SSE)
+app.use(compression({
+  filter: (req, res) => {
+    // تعطيل الضغط لطلبات SSE
+    if (req.path === '/analyze') {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
+
 // واجهة واحدة فقط
 app.use(express.static(__dirname));
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
+
+// دالة للتحقق إذا كان العنوان PDA (Program Derived Address)
+function isPDA(address) {
+  try {
+    const publicKey = new PublicKey(address);
+    return !PublicKey.isOnCurve(publicKey.toBytes());
+  } catch (error) {
+    return false;
+  }
+}
 
 // نظام إدارة sessions والمحافظ لكل مستخدم
 const userSessions = new Map(); // تخزين بيانات كل session
@@ -517,6 +540,7 @@ async function getHolders(mint) {
     let validAccounts = 0;
     let qualifiedHolders = 0;
     let excludedPlatforms = 0;
+    let excludedPDAs = 0;
 
     console.log(`🔄 معالجة ${accounts.length} حساب...`);
 
@@ -528,21 +552,29 @@ async function getHolders(mint) {
 
         if (owner && tokenAmount) {
           validAccounts++;
+          
+          // تحقق من عناوين المنصات المُستبعدة أولاً
+          if (EXCLUDED_ADDRESSES.has(owner)) {
+            excludedPlatforms++;
+            continue;
+          }
+          
+          // تحقق إذا كان العنوان PDA - تخطيه مباشرة
+          if (isPDA(owner)) {
+            excludedPDAs++;
+            continue;
+          }
+          
           const balance = parseFloat(tokenAmount.uiAmount) || 0;
           const valueInUSD = balance * tokenPrice;
 
-          // تحقق من القيمة أولاً
+          // تحقق من القيمة
           if (valueInUSD >= 10) {
-            // تحقق من عناوين المنصات المُستبعدة
-            if (EXCLUDED_ADDRESSES.has(owner)) {
-              excludedPlatforms++;
+            qualifiedHolders++;
+            if (ownersWithBalance.has(owner)) {
+              ownersWithBalance.set(owner, ownersWithBalance.get(owner) + valueInUSD);
             } else {
-              qualifiedHolders++;
-              if (ownersWithBalance.has(owner)) {
-                ownersWithBalance.set(owner, ownersWithBalance.get(owner) + valueInUSD);
-              } else {
-                ownersWithBalance.set(owner, valueInUSD);
-              }
+              ownersWithBalance.set(owner, valueInUSD);
             }
           }
         }
@@ -556,6 +588,7 @@ async function getHolders(mint) {
       validAccounts,
       qualifiedHolders,
       excludedPlatforms,
+      excludedPDAs,
       uniqueHolders: ownersWithBalance.size
     });
 
