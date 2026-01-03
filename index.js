@@ -1,9 +1,7 @@
 const express = require("express");
 const path = require("path");
 const cookieParser = require("cookie-parser");
-const compression = require("compression");
 const { v4: uuidv4 } = require("uuid");
-const { PublicKey } = require("@solana/web3.js");
 
 // استيراد fetch ديناميكياً
 let fetch;
@@ -15,31 +13,10 @@ let fetch;
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ضغط الاستجابات لتخفيف استهلاك الموارد (تعطيل للـ SSE)
-app.use(compression({
-  filter: (req, res) => {
-    // تعطيل الضغط لطلبات SSE
-    if (req.path === '/analyze') {
-      return false;
-    }
-    return compression.filter(req, res);
-  }
-}));
-
 // واجهة واحدة فقط
 app.use(express.static(__dirname));
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json());
 app.use(cookieParser());
-
-// دالة للتحقق إذا كان العنوان PDA (Program Derived Address)
-function isPDA(address) {
-  try {
-    const publicKey = new PublicKey(address);
-    return !PublicKey.isOnCurve(publicKey.toBytes());
-  } catch (error) {
-    return false;
-  }
-}
 
 // نظام إدارة sessions والمحافظ لكل مستخدم
 const userSessions = new Map(); // تخزين بيانات كل session
@@ -506,11 +483,8 @@ async function getHolders(mint) {
         encoding: "jsonParsed",
         filters: [
           {
-            dataSize: 165, // حجم حساب التوكن
-          },
-          {
             memcmp: {
-              offset: 0, // موضع عنوان المنت
+              offset: 0,
               bytes: mint,
             },
           },
@@ -518,58 +492,86 @@ async function getHolders(mint) {
       },
     ]);
 
-    console.log("📊 استجابة getProgramAccounts:", {
-      type: typeof accounts,
-      isArray: Array.isArray(accounts),
+    // محاولة بديلة إذا كانت الاستجابة فارغة (بعض الـ RPCs لا تدعم getProgramAccounts بشكل جيد للتوكنات النشطة جداً)
+    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+      console.log("⚠️ RPC لم يعثر على حسابات. محاولة استخدام getLargestAccounts...");
+      
+      // الحصول على سعر التوكن أولاً لاستخدامه في المعالجة
+      console.log("💰 جلب سعر التوكن للمحاولة البديلة...");
+      const tokenPrice = await getTokenPrice(mint, 'both');
+      
+      const largestAccounts = await rpc("getTokenLargestAccounts", [mint], 2);
+      
+      if (largestAccounts && largestAccounts.value && Array.isArray(largestAccounts.value)) {
+        console.log(`📊 تم العثور على ${largestAccounts.value.length} من أكبر الحسابات`);
+        
+        // تحويل أكبر الحسابات إلى تنسيق مشابه لـ getProgramAccounts
+        const syntheticAccounts = await Promise.all(largestAccounts.value.map(async (acc) => {
+          try {
+            const accInfo = await rpc("getAccountInfo", [acc.address, { encoding: "jsonParsed" }], 2);
+            if (accInfo && accInfo.value) {
+              return {
+                pubkey: acc.address,
+                account: accInfo.value
+              };
+            }
+          } catch (e) {
+            return null;
+          }
+          return null;
+        }));
+        
+        const filteredSynthetic = syntheticAccounts.filter(Boolean);
+        if (filteredSynthetic.length > 0) {
+          console.log(`✅ تم تجهيز ${filteredSynthetic.length} حساب بديل`);
+          return processAccounts(filteredSynthetic, mint, tokenPrice);
+        }
+      }
+    }
+
+    console.log(`📊 استجابة getProgramAccounts لـ ${mint}:`, {
       length: accounts?.length || 0,
-      sample: accounts?.[0] || null
     });
 
-    if (!accounts || !Array.isArray(accounts)) {
-      console.error("❌ فشل في الحصول على حسابات التوكن:", accounts);
+    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+      console.log("❌ لم يتم العثور على أي حسابات لهذا التوكن عبر جميع المحاولات.");
       return [];
     }
 
-    // الحصول على سعر التوكن
-    console.log("💰 جلب سعر التوكن...");
+    // الحصول على سعر التوكن قبل المعالجة العادية
     const tokenPrice = await getTokenPrice(mint, 'both');
-    console.log(`💲 سعر التوكن: $${tokenPrice}`);
+    return processAccounts(accounts, mint, tokenPrice);
+  } catch (error) {
+    console.error("❌ خطأ في getHolders:", error);
+    return [];
+  }
+}
 
-    const ownersWithBalance = new Map();
-    let processedAccounts = 0;
-    let validAccounts = 0;
-    let qualifiedHolders = 0;
-    let excludedPlatforms = 0;
-    let excludedPDAs = 0;
+// دالة مساعدة لمعالجة الحسابات (تم فصلها لتسهيل الاستخدام البديل)
+async function processAccounts(accounts, mint, tokenPrice) {
+  const ownersWithBalance = new Map();
+  let processedAccounts = 0;
+  let validAccounts = 0;
+  let qualifiedHolders = 0;
+  let excludedPlatforms = 0;
 
-    console.log(`🔄 معالجة ${accounts.length} حساب...`);
+  console.log(`🔄 معالجة ${accounts.length} حساب...`);
 
-    for (let acc of accounts) {
-      processedAccounts++;
-      try {
-        const owner = acc.account?.data?.parsed?.info?.owner;
-        const tokenAmount = acc.account?.data?.parsed?.info?.tokenAmount;
+  for (let acc of accounts) {
+    processedAccounts++;
+    try {
+      const owner = acc.account?.data?.parsed?.info?.owner;
+      const tokenAmount = acc.account?.data?.parsed?.info?.tokenAmount;
 
-        if (owner && tokenAmount) {
-          validAccounts++;
-          
-          // تحقق من عناوين المنصات المُستبعدة أولاً
+      if (owner && tokenAmount) {
+        validAccounts++;
+        const balance = parseFloat(tokenAmount.uiAmount) || 0;
+        const valueInUSD = balance * tokenPrice;
+
+        if (valueInUSD >= 10) {
           if (EXCLUDED_ADDRESSES.has(owner)) {
             excludedPlatforms++;
-            continue;
-          }
-          
-          // تحقق إذا كان العنوان PDA - تخطيه مباشرة
-          if (isPDA(owner)) {
-            excludedPDAs++;
-            continue;
-          }
-          
-          const balance = parseFloat(tokenAmount.uiAmount) || 0;
-          const valueInUSD = balance * tokenPrice;
-
-          // تحقق من القيمة
-          if (valueInUSD >= 10) {
+          } else {
             qualifiedHolders++;
             if (ownersWithBalance.has(owner)) {
               ownersWithBalance.set(owner, ownersWithBalance.get(owner) + valueInUSD);
@@ -578,26 +580,20 @@ async function getHolders(mint) {
             }
           }
         }
-      } catch (error) {
-        console.error(`❌ خطأ في معالجة الحساب ${processedAccounts}:`, error);
       }
+    } catch (error) {
+      // تجاهل أخطاء الحسابات الفردية
     }
-
-    console.log(`✅ انتهاء المعالجة:`, {
-      processedAccounts,
-      validAccounts,
-      qualifiedHolders,
-      excludedPlatforms,
-      excludedPDAs,
-      uniqueHolders: ownersWithBalance.size
-    });
-
-    return Array.from(ownersWithBalance.keys());
-
-  } catch (error) {
-    console.error("❌ خطأ في getHolders:", error);
-    return [];
   }
+
+  console.log(`✅ انتهاء المعالجة:`, {
+    processedAccounts,
+    validAccounts,
+    qualifiedHolders,
+    uniqueHolders: ownersWithBalance.size
+  });
+
+  return Array.from(ownersWithBalance.keys());
 }
 
 // احصل على مالك حساب توكن
