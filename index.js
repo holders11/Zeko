@@ -57,22 +57,44 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year) {
                 method: "getSignaturesForAddress", 
                 params: [address, { limit: 1000, before: beforeSig }] 
             };
-            const resp = await fetch(alchemyUrl, { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify(payload),
-                keepalive: true
-            });
-            if (!resp.ok) {
-                console.log(`[Alchemy Error] Status: ${resp.status}, URL: ${alchemyUrl.substring(0, 50)}...`);
-                return [];
+            
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            while (retryCount < maxRetries) {
+                const resp = await fetch(alchemyUrl, { 
+                    method: "POST", 
+                    headers: { "Content-Type": "application/json" }, 
+                    body: JSON.stringify(payload),
+                    keepalive: true
+                });
+                
+                if (resp.status === 429) {
+                    const waitTime = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
+                    console.log(`[Alchemy 429] Waiting ${Math.round(waitTime)}ms and retrying...`);
+                    await sleep(waitTime);
+                    retryCount++;
+                    continue;
+                }
+                
+                if (!resp.ok) {
+                    console.log(`[Alchemy Error] Status: ${resp.status}, URL: ${alchemyUrl.substring(0, 50)}...`);
+                    return [];
+                }
+                const data = await resp.json();
+                if (data.error) {
+                    if (data.error.code === -32005 || data.error.message.includes("limit")) {
+                        const waitTime = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
+                        await sleep(waitTime);
+                        retryCount++;
+                        continue;
+                    }
+                    console.log(`[Alchemy RPC Error] Code: ${data.error.code}, Message: ${data.error.message}`);
+                    return [];
+                }
+                return data.result || [];
             }
-            const data = await resp.json();
-            if (data.error) {
-                console.log(`[Alchemy RPC Error] Code: ${data.error.code}, Message: ${data.error.message}`);
-                return [];
-            }
-            return data.result || [];
+            return [];
         };
 
         // Fetch first batch
@@ -126,20 +148,33 @@ async function analyzeSignaturesHelius(signatures, address, apiKey, onProgress, 
         if (!socket.isRunning) return;
         const url = apiKey.startsWith('http') ? apiKey : `https://api.helius.xyz/v0/transactions/?api-key=${apiKey}`;
         try {
-            const resp = await fetch(url, { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify({ transactions: batch }),
-                // keepalive can cause issues on memory-limited environments like Render Free
-                keepalive: false
-            });
-            if (!resp.ok) {
-                if (resp.status === 429 && socket.isRunning) { 
-                    await sleep(5000); // Back off more aggressively on free tiers
-                    return processBatch(batch, startIdx); 
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            const attemptFetch = async () => {
+                const resp = await fetch(url, { 
+                    method: "POST", 
+                    headers: { "Content-Type": "application/json" }, 
+                    body: JSON.stringify({ transactions: batch }),
+                    keepalive: false
+                });
+                
+                if (resp.status === 429 && socket.isRunning) {
+                    if (retryCount < maxRetries) {
+                        const waitTime = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
+                        console.log(`[Helius 429] Waiting ${Math.round(waitTime)}ms...`);
+                        await sleep(waitTime);
+                        retryCount++;
+                        return attemptFetch();
+                    }
                 }
-                return;
-            }
+                return resp;
+            };
+
+            const resp = await attemptFetch();
+            
+            if (!resp || !resp.ok) return;
+            
             const txs = await resp.json();
             if (!socket.isRunning) return;
             // Process transactions in smaller chunks to avoid blocking the event loop
