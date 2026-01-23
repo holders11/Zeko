@@ -44,12 +44,16 @@ async function getJupiterBalances(address) {
     return null;
 }
 
+// Shared throttling state across address processing
+let isAlchemyThrottled = false;
+
 async function getSignaturesFromAlchemy(address, alchemyUrl, year, onFetchProgress) {
     const startYear = year === '2025' ? 1735689600 : 1704067200;
     const endYear = year === '2025' ? 1767225599 : 1735689599;
     let signatures = [];
     let totalFetchedCount = 0;
     let before = null;
+
     try {
         const fetchBatch = async (beforeSig) => {
             const payload = { 
@@ -63,6 +67,11 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year, onFetchProgre
             const maxRetries = 3;
             
             while (retryCount < maxRetries) {
+                // If we've been throttled globally, add a mandatory delay between batches
+                if (isAlchemyThrottled) {
+                    await sleep(2000); // More aggressive global slowdown
+                }
+
                 const resp = await fetch(alchemyUrl, { 
                     method: "POST", 
                     headers: { "Content-Type": "application/json" }, 
@@ -71,8 +80,9 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year, onFetchProgre
                 });
                 
                 if (resp.status === 429) {
-                    const waitTime = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
-                    console.log(`[Alchemy 429] Waiting ${Math.round(waitTime)}ms and retrying...`);
+                    isAlchemyThrottled = true;
+                    const waitTime = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
+                    console.log(`[Alchemy 429] Global Throttling active. Waiting ${Math.round(waitTime)}ms...`);
                     await sleep(waitTime);
                     retryCount++;
                     continue;
@@ -85,7 +95,8 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year, onFetchProgre
                 const data = await resp.json();
                 if (data.error) {
                     if (data.error.code === -32005 || data.error.message.includes("limit")) {
-                        const waitTime = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
+                        isAlchemyThrottled = true;
+                        const waitTime = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
                         await sleep(waitTime);
                         retryCount++;
                         continue;
@@ -98,30 +109,25 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year, onFetchProgre
             return [];
         };
 
-        // Fetch first batch
+        // Fetch batches sequentially to strictly respect throttling
         let batch = await fetchBatch(null);
         while (batch.length > 0) {
             totalFetchedCount += batch.length;
             if (onFetchProgress) onFetchProgress(totalFetchedCount);
             
             let inRange = false;
-            // Process the current batch
             for (const sig of batch) {
                 if (sig.blockTime >= startYear && sig.blockTime <= endYear) {
                     signatures.push(sig.signature);
                     inRange = true;
                 } else if (sig.blockTime < startYear) {
-                    return signatures; // Out of range, older than start
+                    return signatures;
                 }
             }
             
             const lastSig = batch[batch.length - 1].signature;
-            
-            const nextBatches = await Promise.all([
-                fetchBatch(lastSig),
-            ]);
-            
-            batch = nextBatches[0];
+            // Removed Promise.all to ensure sequential processing and strict delay respect
+            batch = await fetchBatch(lastSig);
         }
     } catch (err) {
         console.log(`[Alchemy Fetch Error] ${err.message}`);
@@ -230,12 +236,15 @@ async function analyzeSignaturesHelius(signatures, address, apiKey, onProgress, 
     };
 
     // Maximize parallelism for Helius API
-    const HELIUS_CONCURRENCY = 10; 
+    const HELIUS_CONCURRENCY = 5; // Reduced from 10 for Render stability
     const heliusBatches = [];
     for (let i = 0; i < signatures.length; i += 100) heliusBatches.push(signatures.slice(i, i + 100));
 
     for (let i = 0; i < heliusBatches.length; i += HELIUS_CONCURRENCY) {
         if (!socket.isRunning) break;
+        // Heartbeat update to keep socket alive during intensive processing
+        if (onProgress) onProgress(totalJupSwaps, Math.min(i * 100, signatures.length), totalVolumeUSD);
+        
         await Promise.all(heliusBatches.slice(i, i + HELIUS_CONCURRENCY).map((b, idx) => processBatch(b, (i + idx) * 100)));
     }
     return { count: totalJupSwaps, volume: totalVolumeUSD, totalAnalyzed: signatures.length };
