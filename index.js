@@ -44,10 +44,11 @@ async function getJupiterBalances(address) {
     return null;
 }
 
-async function getSignaturesFromAlchemy(address, alchemyUrl, year) {
+async function getSignaturesFromAlchemy(address, alchemyUrl, year, onFetchProgress) {
     const startYear = year === '2025' ? 1735689600 : 1704067200;
     const endYear = year === '2025' ? 1767225599 : 1735689599;
     let signatures = [];
+    let totalFetchedCount = 0;
     let before = null;
     try {
         const fetchBatch = async (beforeSig) => {
@@ -100,7 +101,11 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year) {
         // Fetch first batch
         let batch = await fetchBatch(null);
         while (batch.length > 0) {
+            totalFetchedCount += batch.length;
+            if (onFetchProgress) onFetchProgress(totalFetchedCount);
+            
             let inRange = false;
+            // Process the current batch
             for (const sig of batch) {
                 if (sig.blockTime >= startYear && sig.blockTime <= endYear) {
                     signatures.push(sig.signature);
@@ -110,11 +115,13 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year) {
                 }
             }
             
-            // If the whole batch was newer than our range, we keep going
-            // If we found some in range, we continue
-            // If we hit older, we already returned.
             const lastSig = batch[batch.length - 1].signature;
-            batch = await fetchBatch(lastSig);
+            
+            const nextBatches = await Promise.all([
+                fetchBatch(lastSig),
+            ]);
+            
+            batch = nextBatches[0];
         }
     } catch (err) {
         console.log(`[Alchemy Fetch Error] ${err.message}`);
@@ -140,29 +147,28 @@ async function analyzeSignaturesHelius(signatures, address, apiKey, onProgress, 
     const jupProgramIds = ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB", "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M", "j1o2qRpjcyUwEvwtcfhEQefh773ZgjxcVRry7LDqg5X"];
     const usdcMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     const usdtMint = "Es9vMFrzaDC6is695G2C48LswSt53n4n8zVLLt39G75";
-    const concurrency = 5;
+    const concurrency = 3; // Reduced concurrency for DAS batch calls
     const batches = [];
-    for (let i = 0; i < signatures.length; i += 100) batches.push(signatures.slice(i, i + 100));
+    for (let i = 0; i < signatures.length; i += 50) batches.push(signatures.slice(i, i + 50)); // DAS API prefers smaller batches for parsing
 
     const processBatch = async (batch, startIdx) => {
         if (!socket.isRunning) return;
         const url = apiKey.startsWith('http') ? apiKey : `https://api.helius.xyz/v0/transactions/?api-key=${apiKey}`;
         try {
             let retryCount = 0;
-            const maxRetries = 3;
+            const maxRetries = 2; // Reduced retries for faster throughput
             
             const attemptFetch = async () => {
                 const resp = await fetch(url, { 
                     method: "POST", 
                     headers: { "Content-Type": "application/json" }, 
                     body: JSON.stringify({ transactions: batch }),
-                    keepalive: false
+                    keepalive: true // Re-enabled for batch speed
                 });
                 
                 if (resp.status === 429 && socket.isRunning) {
                     if (retryCount < maxRetries) {
-                        const waitTime = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
-                        console.log(`[Helius 429] Waiting ${Math.round(waitTime)}ms...`);
+                        const waitTime = 1000 + Math.random() * 500; // Minimal jittered wait for speed
                         await sleep(waitTime);
                         retryCount++;
                         return attemptFetch();
@@ -172,18 +178,19 @@ async function analyzeSignaturesHelius(signatures, address, apiKey, onProgress, 
             };
 
             const resp = await attemptFetch();
-            
             if (!resp || !resp.ok) return;
             
             const txs = await resp.json();
-            if (!socket.isRunning) return;
-            // Process transactions in smaller chunks to avoid blocking the event loop
-            for (let i = 0; i < txs.length; i++) {
-                if (i % 20 === 0) await new Promise(resolve => setImmediate(resolve));
-                if (!socket.isRunning) break;
-                const tx = txs[i];
+            if (!socket.isRunning || !Array.isArray(txs)) return;
+            
+            // Parallel processing of transactions in memory instead of sequential
+            txs.forEach(tx => {
+                if (!tx) return;
                 const txString = JSON.stringify(tx);
-                const isJup = tx.source === "JUPITER" || jupProgramIds.some(id => txString.includes(id)) || (tx.instructions && tx.instructions.some(ix => jupProgramIds.includes(ix.programId)));
+                const isJup = tx.source === "JUPITER" || 
+                             jupProgramIds.some(id => txString.includes(id)) || 
+                             (tx.instructions && tx.instructions.some(ix => jupProgramIds.includes(ix.programId)));
+                
                 if (isJup) {
                     totalJupSwaps++;
                     if (tx.events && tx.events.swap) {
@@ -216,14 +223,20 @@ async function analyzeSignaturesHelius(signatures, address, apiKey, onProgress, 
                         });
                     }
                 }
-            }
-            if (onProgress && socket.isRunning) onProgress(totalJupSwaps, Math.min(startIdx + 100, signatures.length), totalVolumeUSD);
+            });
+            
+            if (onProgress && socket.isRunning) onProgress(totalJupSwaps, Math.min(startIdx + batch.length, signatures.length), totalVolumeUSD);
         } catch (err) {}
     };
 
-    for (let i = 0; i < batches.length; i += concurrency) {
+    // Maximize parallelism for Helius API
+    const HELIUS_CONCURRENCY = 10; 
+    const heliusBatches = [];
+    for (let i = 0; i < signatures.length; i += 100) heliusBatches.push(signatures.slice(i, i + 100));
+
+    for (let i = 0; i < heliusBatches.length; i += HELIUS_CONCURRENCY) {
         if (!socket.isRunning) break;
-        await Promise.all(batches.slice(i, i + concurrency).map((b, idx) => processBatch(b, i * 100 + idx * 100)));
+        await Promise.all(heliusBatches.slice(i, i + HELIUS_CONCURRENCY).map((b, idx) => processBatch(b, (i + idx) * 100)));
     }
     return { count: totalJupSwaps, volume: totalVolumeUSD, totalAnalyzed: signatures.length };
 }
@@ -488,7 +501,11 @@ io.on('connection', (socket) => {
                     let retryAlchemy = 0;
                     while (retryAlchemy < healthyAlchemy.length) {
                         const alchemyUrl = healthyAlchemy[(alchemyIdx + retryAlchemy) % healthyAlchemy.length];
-                        sigs = await getSignaturesFromAlchemy(addr, alchemyUrl, year);
+                        sigs = await getSignaturesFromAlchemy(addr, alchemyUrl, year, (count) => {
+                            if (socket.isRunning) {
+                                socketActiveProgress.set(addr, { stage: "Fetching", tx: count, vol: 0 });
+                            }
+                        });
                         if (sigs.length > 0 || !socket.isRunning) break;
                         console.log(`[خطأ] فشل جلب التوقيعات من الرابط: ${alchemyUrl} للمحفظة: ${addr}`);
                         retryAlchemy++;
