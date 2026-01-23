@@ -63,7 +63,15 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year) {
                 body: JSON.stringify(payload),
                 keepalive: true
             });
+            if (!resp.ok) {
+                console.log(`[Alchemy Error] Status: ${resp.status}, URL: ${alchemyUrl.substring(0, 50)}...`);
+                return [];
+            }
             const data = await resp.json();
+            if (data.error) {
+                console.log(`[Alchemy RPC Error] Code: ${data.error.code}, Message: ${data.error.message}`);
+                return [];
+            }
             return data.result || [];
         };
 
@@ -86,7 +94,9 @@ async function getSignaturesFromAlchemy(address, alchemyUrl, year) {
             const lastSig = batch[batch.length - 1].signature;
             batch = await fetchBatch(lastSig);
         }
-    } catch (err) {}
+    } catch (err) {
+        console.log(`[Alchemy Fetch Error] ${err.message}`);
+    }
     return signatures;
 }
 
@@ -351,6 +361,7 @@ app.get('/', (req, res) => {
                         <div class="flex flex-col items-end">
                             <span class="bg-blue-900/30 text-blue-400 text-[10px] px-2 py-1 rounded-full font-bold">$\${r.volume.toLocaleString(undefined, {maximumFractionDigits:2})}</span>
                             \${jup > 0 ? \`<span class="text-[10px] font-bold text-green-400 mt-1">\${jup.toLocaleString()} JUP</span>\` : ''}
+                            <span class="text-[10px] text-slate-500 mt-1">\${r.totalAnalyzed || 0} tx</span>
                         </div>
                     </div>
                 </div>\`;
@@ -394,7 +405,8 @@ io.on('connection', (socket) => {
         }
         const { list, year } = data;
         socket.isRunning = true;
-        const socketAddresses = list.split('\n').map(s => s.trim()).filter(s => s.length >= 32);
+        const solanaAddressRegex = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;
+        const socketAddresses = [...new Set(list.match(solanaAddressRegex) || [])];
         const socketResults = [];
         const socketActiveProgress = new Map();
         let socketNextAddressIndex = 0;
